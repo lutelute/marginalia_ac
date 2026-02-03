@@ -325,16 +325,15 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
   return (
     <>
       <div className="app" ref={appRef}>
-        {isSidebarOpen && (
-          <>
-            <div className="sidebar" style={{ width: sidebarWidth }}>
-              <FileTree />
-            </div>
-            <ResizeHandle onResize={handleSidebarResize} position="left" />
-          </>
-        )}
+        <div
+          className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}
+          style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
+        >
+          <FileTree />
+        </div>
+        {isSidebarOpen && <ResizeHandle onResize={handleSidebarResize} position="left" />}
 
-        <div className="main-content">
+        <div className={`main-content ${isEditorOpen ? 'with-editor' : 'preview-only'}`}>
           {isEditorOpen ? (
             <SplitPane
               left={<MarkdownEditor />}
@@ -502,6 +501,19 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           .app {
             margin-top: 40px;
             height: calc(100vh - 40px) !important;
+          }
+
+          .sidebar {
+            transition: width 0.2s ease-out;
+            overflow: hidden;
+          }
+
+          .sidebar.closed {
+            width: 0 !important;
+          }
+
+          .main-content {
+            transition: flex 0.2s ease-out;
           }
         `}</style>
     </>

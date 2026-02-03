@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+import DiffPanel from './DiffPanel';
 
 function BackupPanel() {
-  const { currentFile, openFile } = useFile();
+  const { currentFile, openFile, content: currentContent } = useFile();
   const { annotations } = useAnnotation();
   const [backupType, setBackupType] = useState('file'); // 'file' | 'annotation'
   const [fileBackups, setFileBackups] = useState([]);
@@ -11,6 +12,7 @@ function BackupPanel() {
   const [isLoading, setIsLoading] = useState(false);
   const [previewContent, setPreviewContent] = useState(null);
   const [previewBackup, setPreviewBackupData] = useState(null);
+  const [showDiff, setShowDiff] = useState(false);
 
   // ファイルバックアップ一覧を取得
   const loadFileBackups = useCallback(async () => {
@@ -252,13 +254,22 @@ function BackupPanel() {
         </div>
       )}
 
-      {previewContent && previewBackup?.type === 'file' && (
+      {previewContent && previewBackup?.type === 'file' && !showDiff && (
         <div className="backup-preview">
           <div className="preview-header">
             <span>プレビュー: {formatDate(previewBackup?.createdAt)}</span>
-            <button onClick={() => { setPreviewContent(null); setPreviewBackupData(null); }}>
-              閉じる
-            </button>
+            <div className="preview-actions">
+              <button
+                className="diff-btn"
+                onClick={() => setShowDiff(true)}
+                title="現在のファイルと比較"
+              >
+                差分
+              </button>
+              <button onClick={() => { setPreviewContent(null); setPreviewBackupData(null); }}>
+                閉じる
+              </button>
+            </div>
           </div>
           <pre className="preview-content">{previewContent}</pre>
           <button
@@ -267,6 +278,19 @@ function BackupPanel() {
           >
             このバージョンを復元
           </button>
+        </div>
+      )}
+
+      {showDiff && previewContent && previewBackup?.type === 'file' && (
+        <div className="diff-panel-container">
+          <DiffPanel
+            oldContent={previewContent}
+            newContent={currentContent}
+            oldLabel={formatDate(previewBackup?.createdAt)}
+            newLabel="現在"
+            onClose={() => setShowDiff(false)}
+            onRestore={() => handleRestoreFile(previewBackup)}
+          />
         </div>
       )}
 
@@ -446,9 +470,35 @@ function BackupPanel() {
           color: var(--text-secondary);
         }
 
+        .preview-actions {
+          display: flex;
+          gap: 8px;
+        }
+
         .preview-header button {
           font-size: 11px;
           color: var(--text-muted);
+        }
+
+        .diff-btn {
+          padding: 2px 8px;
+          background-color: var(--accent-color);
+          color: white !important;
+          border-radius: 4px;
+        }
+
+        .diff-btn:hover {
+          background-color: var(--accent-hover);
+        }
+
+        .diff-panel-container {
+          position: fixed;
+          top: 46px;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 100;
+          background-color: var(--bg-primary);
         }
 
         .preview-content {

@@ -16,6 +16,8 @@ const initialState = {
   isModified: false,
   isLoading: false,
   error: null,
+  externalChangeDetected: false,
+  lastKnownMtime: null as string | null,
 };
 
 function fileReducer(state, action) {
@@ -52,6 +54,8 @@ function fileReducer(state, action) {
         originalContent: action.payload.original ?? action.payload.content,
         isModified: false,
         isLoading: false,
+        lastKnownMtime: action.payload.mtime || null,
+        externalChangeDetected: false,
       };
 
     case 'UPDATE_CONTENT':
@@ -85,6 +89,24 @@ function fileReducer(state, action) {
       return {
         ...state,
         error: null,
+      };
+
+    case 'EXTERNAL_CHANGE_DETECTED':
+      return {
+        ...state,
+        externalChangeDetected: true,
+      };
+
+    case 'CLEAR_EXTERNAL_CHANGE':
+      return {
+        ...state,
+        externalChangeDetected: false,
+      };
+
+    case 'UPDATE_MTIME':
+      return {
+        ...state,
+        lastKnownMtime: action.payload,
       };
 
     default:
@@ -213,16 +235,88 @@ export function FileProvider({ children }) {
     try {
       dispatch({ type: 'SET_CURRENT_FILE', payload: filePath });
 
-      const result = await window.electronAPI.readFile(filePath);
-      if (result.success) {
-        dispatch({ type: 'SET_CONTENT', payload: { content: result.content } });
+      const [fileResult, statsResult] = await Promise.all([
+        window.electronAPI.readFile(filePath),
+        window.electronAPI.getFileStats(filePath),
+      ]);
+
+      if (fileResult.success) {
+        dispatch({
+          type: 'SET_CONTENT',
+          payload: {
+            content: fileResult.content,
+            mtime: statsResult?.stats?.mtime || null,
+          },
+        });
       } else {
-        dispatch({ type: 'SET_ERROR', payload: result.error });
+        dispatch({ type: 'SET_ERROR', payload: fileResult.error });
       }
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: error.message });
     }
   }, []);
+
+  // 外部変更を検出
+  const checkExternalChange = useCallback(async () => {
+    if (!state.currentFile || !state.lastKnownMtime) return false;
+
+    try {
+      const result = await window.electronAPI.getFileStats(state.currentFile);
+      if (result?.success && result.stats?.mtime) {
+        if (result.stats.mtime !== state.lastKnownMtime) {
+          dispatch({ type: 'EXTERNAL_CHANGE_DETECTED' });
+          return true;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check external change:', error);
+    }
+    return false;
+  }, [state.currentFile, state.lastKnownMtime]);
+
+  // ファイルを再読み込み
+  const reloadFile = useCallback(async () => {
+    if (!state.currentFile) return;
+
+    try {
+      dispatch({ type: 'SET_LOADING', payload: true });
+
+      const [fileResult, statsResult] = await Promise.all([
+        window.electronAPI.readFile(state.currentFile),
+        window.electronAPI.getFileStats(state.currentFile),
+      ]);
+
+      if (fileResult.success) {
+        dispatch({
+          type: 'SET_CONTENT',
+          payload: {
+            content: fileResult.content,
+            mtime: statsResult?.stats?.mtime || null,
+          },
+        });
+      } else {
+        dispatch({ type: 'SET_ERROR', payload: fileResult.error });
+      }
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+    }
+  }, [state.currentFile]);
+
+  // 外部変更フラグをクリア
+  const clearExternalChange = useCallback(() => {
+    dispatch({ type: 'CLEAR_EXTERNAL_CHANGE' });
+  }, []);
+
+  // 定期的に外部変更をチェック（5秒ごと）
+  useEffect(() => {
+    if (!state.currentFile) return;
+
+    const interval = setInterval(() => {
+      checkExternalChange();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [state.currentFile, checkExternalChange]);
 
   const updateContent = useCallback((content) => {
     dispatch({ type: 'UPDATE_CONTENT', payload: content });
@@ -260,6 +354,9 @@ export function FileProvider({ children }) {
     clearRecentFolders,
     fileMetadata,
     loadFileMetadata,
+    checkExternalChange,
+    reloadFile,
+    clearExternalChange,
   };
 
   return <FileContext.Provider value={value}>{children}</FileContext.Provider>;

@@ -4,6 +4,7 @@ import { useFile } from '../../contexts/FileContext';
 import CommentThread from './CommentThread';
 import HistoryItem from './HistoryItem';
 import BackupPanel from './BackupPanel';
+import TimelineView from './TimelineView';
 
 const ANNOTATION_TYPES = [
   { id: 'comment', label: 'コメント', color: 'var(--comment-color)' },
@@ -16,7 +17,8 @@ function AnnotationPanel() {
   const [activeTab, setActiveTab] = useState('annotations');
   const [newAnnotationType, setNewAnnotationType] = useState('comment');
   const [newAnnotationContent, setNewAnnotationContent] = useState('');
-  const [filterType, setFilterType] = useState('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'unresolved' | 'resolved'>('all');
+  const [filterTypes, setFilterTypes] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState('time');
   const { currentFile } = useFile();
   const {
@@ -27,6 +29,15 @@ function AnnotationPanel() {
     addAnnotation,
     setPendingSelection,
   } = useAnnotation();
+
+  // タイプフィルターのトグル
+  const toggleTypeFilter = (typeId: string) => {
+    setFilterTypes(prev =>
+      prev.includes(typeId)
+        ? prev.filter(t => t !== typeId)
+        : [...prev, typeId]
+    );
+  };
 
   const handleAddAnnotation = () => {
     if (!pendingSelection || !newAnnotationContent.trim()) return;
@@ -43,10 +54,14 @@ function AnnotationPanel() {
 
   const filteredAnnotations = annotations
     .filter((a) => {
-      if (filterType === 'all') return true;
-      if (filterType === 'unresolved') return !a.resolved;
-      if (filterType === 'resolved') return a.resolved;
-      return a.type === filterType;
+      // ステータスフィルター
+      if (filterStatus === 'unresolved' && a.resolved) return false;
+      if (filterStatus === 'resolved' && !a.resolved) return false;
+
+      // タイプフィルター（AND条件：選択されたタイプのいずれかに一致）
+      if (filterTypes.length > 0 && !filterTypes.includes(a.type)) return false;
+
+      return true;
     })
     .sort((a, b) => {
       if (sortOrder === 'time') {
@@ -98,8 +113,8 @@ function AnnotationPanel() {
           注釈 ({unresolvedCount})
         </button>
         <button
-          className={`tab ${activeTab === 'history' ? 'active' : ''}`}
-          onClick={() => setActiveTab('history')}
+          className={`tab ${activeTab === 'timeline' ? 'active' : ''}`}
+          onClick={() => setActiveTab('timeline')}
         >
           履歴
         </button>
@@ -154,31 +169,54 @@ function AnnotationPanel() {
       {/* フィルターバー - 注釈タブ時のみ表示、固定 */}
       {activeTab === 'annotations' && (
         <div className="filter-bar">
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-            <option value="all">すべて ({annotations.length})</option>
-            <option value="unresolved">未解決 ({unresolvedCount})</option>
-            <option value="resolved">解決済み ({resolvedCount})</option>
-            <option disabled>──────</option>
-            <option value="comment">コメント</option>
-            <option value="review">校閲</option>
-            <option value="pending">保留</option>
-            <option value="discussion">議論</option>
-          </select>
-          <div className="sort-buttons">
-            <button
-              className={`sort-btn ${sortOrder === 'time' ? 'active' : ''}`}
-              onClick={() => setSortOrder('time')}
-              title="時刻順（新しい順）"
+          <div className="filter-row">
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value as 'all' | 'unresolved' | 'resolved')}
+              className="status-filter"
             >
-              🕐
-            </button>
-            <button
-              className={`sort-btn ${sortOrder === 'position' ? 'active' : ''}`}
-              onClick={() => setSortOrder('position')}
-              title="位置順（上から）"
-            >
-              📍
-            </button>
+              <option value="all">すべて ({annotations.length})</option>
+              <option value="unresolved">未解決 ({unresolvedCount})</option>
+              <option value="resolved">解決済み ({resolvedCount})</option>
+            </select>
+            <div className="sort-buttons">
+              <button
+                className={`sort-btn ${sortOrder === 'time' ? 'active' : ''}`}
+                onClick={() => setSortOrder('time')}
+                title="時刻順（新しい順）"
+              >
+                🕐
+              </button>
+              <button
+                className={`sort-btn ${sortOrder === 'position' ? 'active' : ''}`}
+                onClick={() => setSortOrder('position')}
+                title="位置順（上から）"
+              >
+                📍
+              </button>
+            </div>
+          </div>
+          <div className="type-filter-row">
+            {ANNOTATION_TYPES.map((type) => (
+              <button
+                key={type.id}
+                className={`type-filter-btn ${filterTypes.includes(type.id) ? 'active' : ''}`}
+                style={{ '--type-color': type.color } as React.CSSProperties}
+                onClick={() => toggleTypeFilter(type.id)}
+                title={type.label}
+              >
+                {type.label}
+              </button>
+            ))}
+            {filterTypes.length > 0 && (
+              <button
+                className="clear-filter-btn"
+                onClick={() => setFilterTypes([])}
+                title="フィルタをクリア"
+              >
+                ×
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -203,18 +241,8 @@ function AnnotationPanel() {
             )}
           </div>
         )}
-        {activeTab === 'history' && (
-          <div className="history-list">
-            {history.length === 0 ? (
-              <div className="empty-state">
-                <p>履歴がありません</p>
-              </div>
-            ) : (
-              history.map((item) => (
-                <HistoryItem key={item.id} item={item} />
-              ))
-            )}
-          </div>
+        {activeTab === 'timeline' && (
+          <TimelineView />
         )}
         {activeTab === 'backup' && (
           <BackupPanel />
@@ -348,12 +376,18 @@ function AnnotationPanel() {
           border-bottom: 1px solid var(--border-color);
           flex-shrink: 0;
           display: flex;
+          flex-direction: column;
           gap: 8px;
-          align-items: center;
           background-color: var(--bg-primary);
         }
 
-        .filter-bar select {
+        .filter-row {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+
+        .status-filter {
           flex: 1;
           padding: 6px 8px;
           font-size: 12px;
@@ -385,6 +419,46 @@ function AnnotationPanel() {
         .sort-btn.active {
           background-color: var(--accent-color);
           color: white;
+        }
+
+        .type-filter-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+
+        .type-filter-btn {
+          padding: 3px 8px;
+          font-size: 10px;
+          border-radius: 10px;
+          background-color: var(--bg-tertiary);
+          color: var(--text-secondary);
+          border: 1px solid var(--border-color);
+          transition: all 0.2s;
+        }
+
+        .type-filter-btn:hover {
+          background-color: var(--bg-hover);
+          border-color: var(--type-color);
+        }
+
+        .type-filter-btn.active {
+          background-color: var(--type-color);
+          color: white;
+          border-color: var(--type-color);
+        }
+
+        .clear-filter-btn {
+          padding: 3px 8px;
+          font-size: 10px;
+          border-radius: 10px;
+          background-color: var(--error-color);
+          color: white;
+          transition: all 0.2s;
+        }
+
+        .clear-filter-btn:hover {
+          opacity: 0.8;
         }
 
         /* スクロール可能なコンテンツ */

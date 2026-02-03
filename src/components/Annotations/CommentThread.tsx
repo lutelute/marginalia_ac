@@ -19,6 +19,7 @@ function CommentThread({ annotation, isSelected }) {
     resolveAnnotation,
     deleteAnnotation,
     addReply,
+    scrollToEditorLine,
   } = useAnnotation();
 
   const config = TYPE_CONFIG[annotation.type] || TYPE_CONFIG.comment;
@@ -149,6 +150,16 @@ function CommentThread({ annotation, isSelected }) {
 
           {/* アクションボタン */}
           <div className="thread-actions">
+            <button
+              className="jump-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                scrollToEditorLine(annotation.startLine, annotation.id);
+              }}
+              title="エディタにジャンプ"
+            >
+              📍
+            </button>
             <button onClick={(e) => { e.stopPropagation(); setShowReplyForm(true); }}>
               返信
             </button>

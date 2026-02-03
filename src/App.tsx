@@ -1,26 +1,33 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FileProvider } from './contexts/FileContext';
-import { AnnotationProvider } from './contexts/AnnotationContext';
+import { AnnotationProvider, useAnnotation } from './contexts/AnnotationContext';
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
+import { ToastProvider } from './contexts/ToastContext';
 import FileTree from './components/Sidebar/FileTree';
 import MarkdownEditor from './components/Editor/MarkdownEditor';
 import MarkdownPreview from './components/Editor/MarkdownPreview';
 import AnnotationPanel from './components/Annotations/AnnotationPanel';
 import SettingsPanel from './components/Settings/SettingsPanel';
 import SplitPane from './components/common/SplitPane';
+import ToastContainer from './components/common/ToastContainer';
+import ExternalChangeWarning from './components/common/ExternalChangeWarning';
 
 function TopBar() {
-  const { settings, updateSettings, openSettings, isDevelopment } = useSettings();
+  const { settings, updateSettings, openSettings, isDevelopment, effectiveTheme } = useSettings();
   const { isSidebarOpen, editorMode, isAnnotationPanelOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel } = useAppState();
-  const isDark = settings.ui.theme === 'dark';
+  const { annotations } = useAnnotation();
+  const isDark = effectiveTheme === 'dark';
+
+  // 未解決の注釈数（open + pending）
+  const unresolvedCount = annotations.filter(a => !a.resolved).length;
 
   useEffect(() => {
-    if (isDark) {
+    if (effectiveTheme === 'dark') {
       document.documentElement.removeAttribute('data-theme');
     } else {
       document.documentElement.setAttribute('data-theme', 'light');
     }
-  }, [isDark]);
+  }, [effectiveTheme]);
 
   // キーボードショートカット
   useEffect(() => {
@@ -34,9 +41,25 @@ function TopBar() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openSettings]);
 
-  const toggleTheme = () => {
-    const newTheme = isDark ? 'light' : 'dark';
-    updateSettings('ui.theme', newTheme);
+  const cycleTheme = () => {
+    const themeOrder: ('dark' | 'light' | 'system')[] = ['dark', 'light', 'system'];
+    const currentIndex = themeOrder.indexOf(settings.ui.theme);
+    const nextTheme = themeOrder[(currentIndex + 1) % themeOrder.length];
+    updateSettings('ui.theme', nextTheme);
+  };
+
+  const getThemeIcon = () => {
+    if (settings.ui.theme === 'system') {
+      return <SystemThemeIcon />;
+    }
+    return isDark ? <SunIcon /> : <MoonIcon />;
+  };
+
+  const getThemeLabel = () => {
+    if (settings.ui.theme === 'system') {
+      return `システム (${effectiveTheme === 'dark' ? 'ダーク' : 'ライト'})`;
+    }
+    return isDark ? 'ライトモード' : 'ダークモード';
   };
 
   return (
@@ -93,11 +116,14 @@ function TopBar() {
             title={isAnnotationPanelOpen ? '注釈パネルを閉じる' : '注釈パネルを開く'}
           >
             <AnnotationPanelIcon />
+            {unresolvedCount > 0 && (
+              <span className="annotation-badge">{unresolvedCount > 99 ? '99+' : unresolvedCount}</span>
+            )}
           </button>
         </div>
         <div className="btn-group">
-          <button className="top-bar-btn icon-only" onClick={toggleTheme} title={isDark ? 'ライトモード' : 'ダークモード'}>
-            {isDark ? <SunIcon /> : <MoonIcon />}
+          <button className="top-bar-btn icon-only" onClick={cycleTheme} title={getThemeLabel()}>
+            {getThemeIcon()}
           </button>
           <button className="top-bar-btn icon-only" onClick={openSettings} title="設定 (⌘,)">
             <SettingsIcon />
@@ -137,6 +163,16 @@ function MoonIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function SystemThemeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   );
 }
@@ -383,19 +419,21 @@ function App() {
 
   return (
     <SettingsProvider>
-      <AppStateProvider>
-        <FileProvider>
-          <AnnotationProvider>
-            <AppContent
-              sidebarWidth={sidebarWidth}
-              annotationWidth={annotationWidth}
-              handleSidebarResize={handleSidebarResize}
-              handleAnnotationResize={handleAnnotationResize}
-              appRef={appRef}
-            />
-          </AnnotationProvider>
-        </FileProvider>
-      </AppStateProvider>
+      <ToastProvider>
+        <AppStateProvider>
+          <FileProvider>
+            <AnnotationProvider>
+              <AppContent
+                sidebarWidth={sidebarWidth}
+                annotationWidth={annotationWidth}
+                handleSidebarResize={handleSidebarResize}
+                handleAnnotationResize={handleAnnotationResize}
+                appRef={appRef}
+              />
+            </AnnotationProvider>
+          </FileProvider>
+        </AppStateProvider>
+      </ToastProvider>
     </SettingsProvider>
   );
 }
@@ -441,6 +479,8 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
       </div>
       <TopBar />
       <SettingsModalWrapper />
+      <ToastContainer />
+      <ExternalChangeWarning />
       <style>{`
           .resize-handle {
             width: 6px;
@@ -618,6 +658,32 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           .top-bar-btn.active:hover {
             background-color: var(--accent-hover);
             color: white;
+          }
+
+          .top-bar-btn {
+            position: relative;
+          }
+
+          .annotation-badge {
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 16px;
+            text-align: center;
+            color: white;
+            background-color: var(--error-color);
+            border-radius: 8px;
+            animation: badgePulse 2s infinite;
+          }
+
+          @keyframes badgePulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
           }
 
           .env-badge {

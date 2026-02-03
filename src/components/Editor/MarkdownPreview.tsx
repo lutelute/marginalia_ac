@@ -7,6 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+import LinkPreviewPopup from './LinkPreviewPopup';
 
 const ANNOTATION_TYPES = [
   { id: 'comment', label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
@@ -613,6 +614,13 @@ function MarkdownPreviewInner() {
   const contentRef = useRef(null);
   const mainRef = useRef(null);
 
+  // リンクホバープレビュー用の状態
+  const [hoveredLink, setHoveredLink] = useState<{
+    href: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const linkHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // レンダリングのたびにマッチ追跡をリセット
   matchedAnnotationIds.clear();
   tableCounter = 0;
@@ -884,6 +892,43 @@ function MarkdownPreviewInner() {
     selectAnnotation(annotationId);
   }, [selectAnnotation]);
 
+  // リンクホバー処理
+  const handleLinkMouseEnter = useCallback((e: React.MouseEvent, href: string) => {
+    // 外部リンクや#リンクはスキップ（外部リンクも簡易表示）
+    if (href.startsWith('#')) return;
+
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    const containerRect = contentRef.current?.getBoundingClientRect();
+
+    if (containerRect) {
+      // 300msの遅延後にポップアップを表示
+      if (linkHoverTimeoutRef.current) {
+        clearTimeout(linkHoverTimeoutRef.current);
+      }
+
+      linkHoverTimeoutRef.current = setTimeout(() => {
+        setHoveredLink({
+          href,
+          position: {
+            x: rect.left - containerRect.left,
+            y: rect.bottom - containerRect.top + contentRef.current.scrollTop + 8,
+          },
+        });
+      }, 300);
+    }
+  }, []);
+
+  const handleLinkMouseLeave = useCallback(() => {
+    if (linkHoverTimeoutRef.current) {
+      clearTimeout(linkHoverTimeoutRef.current);
+      linkHoverTimeoutRef.current = null;
+    }
+  }, []);
+
+  const closeLinkPreview = useCallback(() => {
+    setHoveredLink(null);
+  }, []);
+
   // 注釈マーカー付きテキストを生成するカスタムコンポーネント
   const createAnnotatedComponents = useCallback(() => ({
     a: ({ href, children }) => (
@@ -891,8 +936,11 @@ function MarkdownPreviewInner() {
         href={href}
         onClick={(e) => {
           e.preventDefault();
+          closeLinkPreview();
           handleLinkClick(href);
         }}
+        onMouseEnter={(e) => handleLinkMouseEnter(e, href)}
+        onMouseLeave={handleLinkMouseLeave}
       >
         {children}
       </a>
@@ -1037,7 +1085,7 @@ function MarkdownPreviewInner() {
         })}
       </h3>
     ),
-  }), [handleLinkClick, unresolvedAnnotations, handleAnnotationClick, annotations]);
+  }), [handleLinkClick, unresolvedAnnotations, handleAnnotationClick, annotations, handleLinkMouseEnter, handleLinkMouseLeave, closeLinkPreview]);
 
   if (!currentFile) {
     return (
@@ -1104,6 +1152,16 @@ function MarkdownPreviewInner() {
             position={popupPosition}
             onSelect={handleSelectType}
             onClose={handleClosePopup}
+          />
+        )}
+
+        {hoveredLink && currentFile && rootPath && (
+          <LinkPreviewPopup
+            href={hoveredLink.href}
+            position={hoveredLink.position}
+            rootPath={rootPath}
+            currentFile={currentFile}
+            onClose={closeLinkPreview}
           />
         )}
       </div>

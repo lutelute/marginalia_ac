@@ -6,6 +6,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
+import { EditorView } from '@codemirror/view';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
 
@@ -114,13 +115,249 @@ const TOOLBAR_ITEMS = [
   { id: 'color', label: '色', icon: '🎨', before: '<span style="color: red">', after: '</span>' },
 ];
 
+const ANNOTATION_TYPES = [
+  { id: 'comment', label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
+  { id: 'review', label: '校閲', icon: '✏️', color: 'var(--review-color)' },
+  { id: 'pending', label: '保留', icon: '⏳', color: 'var(--pending-color)' },
+  { id: 'discussion', label: '議論', icon: '💭', color: 'var(--discussion-color)' },
+];
+
+function EditorSelectionPopup({ position, onSelect, onClose }) {
+  const popupRef = useRef(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsReady(true), 150);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    const handleClickOutside = (e) => {
+      if (popupRef.current && !popupRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose, isReady]);
+
+  return (
+    <div
+      ref={popupRef}
+      className="editor-selection-popup"
+      style={{ top: position.y, left: position.x }}
+    >
+      {ANNOTATION_TYPES.map((type) => (
+        <button
+          key={type.id}
+          className="popup-btn"
+          style={{ '--btn-color': type.color }}
+          onClick={() => onSelect(type.id)}
+          title={type.label}
+        >
+          <span className="popup-icon">{type.icon}</span>
+          <span className="popup-label">{type.label}</span>
+        </button>
+      ))}
+
+      <style>{`
+        .editor-selection-popup {
+          position: absolute;
+          display: flex;
+          gap: 4px;
+          padding: 6px;
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          z-index: 100;
+          transform: translateX(-50%);
+          animation: popupFadeIn 0.15s ease-out;
+        }
+
+        @keyframes popupFadeIn {
+          from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(-4px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+        }
+
+        .editor-selection-popup .popup-btn {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 2px;
+          padding: 8px 12px;
+          border-radius: 6px;
+          transition: all 0.2s;
+        }
+
+        .editor-selection-popup .popup-btn:hover {
+          background-color: var(--btn-color);
+          color: white;
+        }
+
+        .editor-selection-popup .popup-icon {
+          font-size: 16px;
+        }
+
+        .editor-selection-popup .popup-label {
+          font-size: 10px;
+          color: var(--text-secondary);
+        }
+
+        .editor-selection-popup .popup-btn:hover .popup-label {
+          color: white;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function EditorAnnotationForm({ type, selectedText, onSubmit, onCancel }) {
+  const [content, setContent] = useState('');
+  const typeInfo = ANNOTATION_TYPES.find((t) => t.id === type);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (content.trim()) {
+      onSubmit(content);
+    }
+  };
+
+  return (
+    <div className="editor-annotation-form-overlay">
+      <form className="editor-annotation-form" onSubmit={handleSubmit}>
+        <div className="form-header">
+          <span className="form-type" style={{ backgroundColor: typeInfo?.color }}>
+            {typeInfo?.icon} {typeInfo?.label}
+          </span>
+        </div>
+        <div className="form-selected-text">
+          "{selectedText.slice(0, 100)}{selectedText.length > 100 ? '...' : ''}"
+        </div>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="注釈を入力..."
+          rows={4}
+          autoFocus
+        />
+        <div className="form-actions">
+          <button type="button" className="cancel-btn" onClick={onCancel}>
+            キャンセル
+          </button>
+          <button type="submit" className="submit-btn" disabled={!content.trim()}>
+            追加
+          </button>
+        </div>
+      </form>
+
+      <style>{`
+        .editor-annotation-form-overlay {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 200;
+        }
+
+        .editor-annotation-form {
+          width: 90%;
+          max-width: 400px;
+          background-color: var(--bg-secondary);
+          border-radius: 8px;
+          padding: 16px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .editor-annotation-form .form-header {
+          margin-bottom: 12px;
+        }
+
+        .editor-annotation-form .form-type {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 4px;
+          font-size: 12px;
+          color: white;
+        }
+
+        .editor-annotation-form .form-selected-text {
+          padding: 8px 12px;
+          background-color: var(--bg-tertiary);
+          border-radius: 4px;
+          font-size: 12px;
+          color: var(--text-secondary);
+          font-style: italic;
+          margin-bottom: 12px;
+          max-height: 60px;
+          overflow-y: auto;
+        }
+
+        .editor-annotation-form textarea {
+          width: 100%;
+          margin-bottom: 12px;
+          min-height: 80px;
+        }
+
+        .editor-annotation-form .form-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+        }
+
+        .editor-annotation-form .cancel-btn {
+          padding: 8px 16px;
+          border-radius: 4px;
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
+
+        .editor-annotation-form .cancel-btn:hover {
+          background-color: var(--bg-hover);
+        }
+
+        .editor-annotation-form .submit-btn {
+          padding: 8px 16px;
+          border-radius: 4px;
+          font-size: 13px;
+          background-color: var(--accent-color);
+          color: white;
+        }
+
+        .editor-annotation-form .submit-btn:hover:not(:disabled) {
+          background-color: var(--accent-hover);
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function MarkdownEditor() {
   const editorRef = useRef(null);
-  const viewRef = useRef(null);
+  const viewRef = useRef<EditorView | null>(null);
   const { content, currentFile, updateContent, saveFile, isModified, fileMetadata, loadFileMetadata } = useFile();
-  const { setPendingSelection, annotations } = useAnnotation();
+  const { setPendingSelection, annotations, scrollToLine, clearScrollToLine, addAnnotation } = useAnnotation();
   const [showMetadata, setShowMetadata] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [editorSelection, setEditorSelection] = useState(null);
+  const [popupPosition, setPopupPosition] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [formType, setFormType] = useState(null);
 
   // ファイルが変更されたらメタデータを読み込む
   useEffect(() => {
@@ -128,6 +365,39 @@ function MarkdownEditor() {
       loadFileMetadata(currentFile);
     }
   }, [currentFile, loadFileMetadata]);
+
+  // scrollToLineが変更されたらエディタをスクロール
+  useEffect(() => {
+    if (!scrollToLine || !viewRef.current) return;
+
+    const view = viewRef.current;
+    const doc = view.state.doc;
+
+    // 行番号が有効な範囲内か確認
+    if (scrollToLine.line < 1 || scrollToLine.line > doc.lines) {
+      clearScrollToLine();
+      return;
+    }
+
+    try {
+      const lineInfo = doc.line(scrollToLine.line);
+
+      // 該当行にスクロールして中央に表示
+      view.dispatch({
+        effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
+        selection: { anchor: lineInfo.from },
+      });
+
+      // フォーカスを当てる
+      view.focus();
+
+      // クリアする
+      clearScrollToLine();
+    } catch (e) {
+      console.error('Failed to scroll to line:', e);
+      clearScrollToLine();
+    }
+  }, [scrollToLine, clearScrollToLine]);
 
   // エディタの初期化
   useEffect(() => {
@@ -186,12 +456,14 @@ function MarkdownEditor() {
   }, [content]);
 
   // テキスト選択時の処理
-  const handleMouseUp = useCallback(() => {
-    if (!viewRef.current) return;
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (!viewRef.current || !editorRef.current) return;
 
     const selection = viewRef.current.state.selection.main;
     if (selection.from === selection.to) {
       setPendingSelection(null);
+      setPopupPosition(null);
+      setEditorSelection(null);
       return;
     }
 
@@ -200,14 +472,58 @@ function MarkdownEditor() {
     const toLine = doc.lineAt(selection.to);
     const selectedText = doc.sliceString(selection.from, selection.to);
 
-    setPendingSelection({
+    const selectionData = {
       startLine: fromLine.number,
       endLine: toLine.number,
       startChar: selection.from - fromLine.from,
       endChar: selection.to - toLine.from,
       text: selectedText,
-    });
+    };
+
+    setPendingSelection(selectionData);
+    setEditorSelection(selectionData);
+
+    // ポップアップ位置を計算
+    const coords = viewRef.current.coordsAtPos(selection.to);
+    const containerRect = editorRef.current.getBoundingClientRect();
+
+    if (coords) {
+      setPopupPosition({
+        x: coords.left - containerRect.left,
+        y: coords.bottom - containerRect.top + 8,
+      });
+    }
   }, [setPendingSelection]);
+
+  // ポップアップで注釈タイプを選択
+  const handleSelectType = useCallback((type) => {
+    setFormType(type);
+    setShowForm(true);
+    setPopupPosition(null);
+  }, []);
+
+  // 注釈追加フォームの送信
+  const handleAddAnnotation = useCallback((content) => {
+    if (editorSelection && formType) {
+      addAnnotation(formType, content, editorSelection);
+    }
+    setShowForm(false);
+    setFormType(null);
+    setEditorSelection(null);
+  }, [editorSelection, formType, addAnnotation]);
+
+  // フォームキャンセル
+  const handleCancelForm = useCallback(() => {
+    setShowForm(false);
+    setFormType(null);
+    setEditorSelection(null);
+  }, []);
+
+  // ポップアップを閉じる
+  const handleClosePopup = useCallback(() => {
+    setPopupPosition(null);
+    setEditorSelection(null);
+  }, []);
 
   // 保存のキーボードショートカット
   useEffect(() => {
@@ -482,7 +798,24 @@ ${styledMd}
         className="editor-container"
         ref={editorRef}
         onMouseUp={handleMouseUp}
-      />
+      >
+        {popupPosition && editorSelection && (
+          <EditorSelectionPopup
+            position={popupPosition}
+            onSelect={handleSelectType}
+            onClose={handleClosePopup}
+          />
+        )}
+      </div>
+
+      {showForm && editorSelection && (
+        <EditorAnnotationForm
+          type={formType}
+          selectedText={editorSelection.text}
+          onSubmit={handleAddAnnotation}
+          onCancel={handleCancelForm}
+        />
+      )}
 
       <style>{`
         .markdown-editor {
@@ -679,6 +1012,7 @@ ${styledMd}
         .editor-container {
           flex: 1;
           overflow: hidden;
+          position: relative;
         }
 
         .editor-container .cm-editor {

@@ -10,6 +10,7 @@ const initialState = {
   selectedAnnotation: null,
   isLoading: false,
   pendingSelection: null, // テキスト選択時の一時データ
+  scrollToLine: null as { line: number; annotationId: string } | null, // エディタへのジャンプ用
 };
 
 function annotationReducer(state, action) {
@@ -72,6 +73,12 @@ function annotationReducer(state, action) {
     case 'CLEAR':
       return {
         ...initialState,
+      };
+
+    case 'SET_SCROLL_TO_LINE':
+      return {
+        ...state,
+        scrollToLine: action.payload,
       };
 
     default:
@@ -199,6 +206,20 @@ export function AnnotationProvider({ children }) {
     });
   }, []);
 
+  const scrollToEditorLine = useCallback((line: number, annotationId: string) => {
+    dispatch({
+      type: 'SET_SCROLL_TO_LINE',
+      payload: { line, annotationId },
+    });
+  }, []);
+
+  const clearScrollToLine = useCallback(() => {
+    dispatch({
+      type: 'SET_SCROLL_TO_LINE',
+      payload: null,
+    });
+  }, []);
+
   const value = {
     ...state,
     addAnnotation,
@@ -208,6 +229,8 @@ export function AnnotationProvider({ children }) {
     setPendingSelection,
     addReply,
     resolveAnnotation,
+    scrollToEditorLine,
+    clearScrollToLine,
   };
 
   return (

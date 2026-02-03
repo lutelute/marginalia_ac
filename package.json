@@ -1,6 +1,6 @@
 {
   "name": "marginalia",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "Markdown編集ツール - 校閲・コメント・バージョン管理機能付き",
   "main": "electron/main.js",
   "scripts": {

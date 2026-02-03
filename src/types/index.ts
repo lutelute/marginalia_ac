@@ -1,6 +1,16 @@
 // Editor Mode
 export type EditorMode = 'edit' | 'split' | 'preview';
 
+// Toast Types
+export type ToastType = 'success' | 'error' | 'warning' | 'info';
+
+export interface Toast {
+  id: string;
+  type: ToastType;
+  message: string;
+  duration?: number;
+}
+
 // User Types
 export interface User {
   id: string;
@@ -47,7 +57,7 @@ export interface Annotation {
 
 export interface AnnotationFilter {
   status: 'resolved' | 'unresolved' | null;
-  type: AnnotationType | null;
+  types: AnnotationType[];
   author: string | null;
 }
 

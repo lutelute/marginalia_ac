@@ -6,7 +6,7 @@ const SettingsContext = createContext(null);
 
 // 環境判定（ビルド時に決定）
 const IS_DEVELOPMENT = import.meta.env.DEV;
-const APP_VERSION = '1.0.11';
+const APP_VERSION = '1.0.18';
 const GITHUB_REPO = 'lutelute/Marginalia';
 
 // Electronアプリかどうかを判定
@@ -48,7 +48,7 @@ const DEFAULT_SETTINGS = {
 
   // UI設定
   ui: {
-    theme: 'dark', // 'dark' | 'light'
+    theme: 'dark' as 'dark' | 'light' | 'system',
     sidebarWidth: 250,
     annotationPanelWidth: 300,
     showWelcomeOnStartup: true,
@@ -60,6 +60,14 @@ const DEFAULT_SETTINGS = {
     verboseLogging: false,
     showDebugInfo: false,
   },
+};
+
+// OS設定から実効テーマを計算
+const getEffectiveTheme = (theme: 'dark' | 'light' | 'system'): 'dark' | 'light' => {
+  if (theme === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return theme;
 };
 
 export function SettingsProvider({ children }) {
@@ -76,6 +84,24 @@ export function SettingsProvider({ children }) {
   });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // OS設定が変更されたときに再計算
+  const [systemTheme, setSystemTheme] = useState<'dark' | 'light'>(() =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  );
+
+  // OS設定変更の監視
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      setSystemTheme(e.matches ? 'dark' : 'light');
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // 実効テーマを計算
+  const effectiveTheme = settings.ui.theme === 'system' ? systemTheme : settings.ui.theme;
 
   // ユーザー管理
   const [users, setUsers] = useState<User[]>(() => {
@@ -382,6 +408,8 @@ export function SettingsProvider({ children }) {
     switchUser,
     updateUserName,
     updateUserColor,
+    // テーマ
+    effectiveTheme,
   };
 
   return (

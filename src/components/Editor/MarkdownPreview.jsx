@@ -13,8 +13,17 @@ const ANNOTATION_TYPES = [
 
 function SelectionPopup({ position, onSelect, onClose }) {
   const popupRef = useRef(null);
+  const [isReady, setIsReady] = useState(false);
+
+  // 少し遅延させてから外側クリック検出を有効化（選択直後の誤検出を防ぐ）
+  useEffect(() => {
+    const timer = setTimeout(() => setIsReady(true), 150);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
+    if (!isReady) return;
+
     const handleClickOutside = (e) => {
       if (popupRef.current && !popupRef.current.contains(e.target)) {
         onClose();
@@ -22,7 +31,7 @@ function SelectionPopup({ position, onSelect, onClose }) {
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [onClose]);
+  }, [onClose, isReady]);
 
   return (
     <div
@@ -254,27 +263,33 @@ function MarkdownPreview() {
   const handleMouseUp = useCallback((e) => {
     // コードブロックのヘッダークリックは無視
     if (e.target.closest('.code-header')) return;
+    // 既存の注釈クリックは無視
+    if (e.target.closest('.annotated-text')) return;
 
     const sel = window.getSelection();
     const text = sel?.toString().trim();
 
     if (!text || text.length === 0) {
-      setPopupPosition(null);
-      setSelection(null);
+      // 何も選択されていない場合のみポップアップを閉じる
+      // ただし、ポップアップ自体をクリックした場合は閉じない
+      if (!e.target.closest('.selection-popup')) {
+        setPopupPosition(null);
+        setSelection(null);
+      }
       return;
     }
 
     const range = sel.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    const mainRect = mainRef.current?.getBoundingClientRect();
+    const contentRect = contentRef.current?.getBoundingClientRect();
 
-    if (mainRect) {
-      // mainRef を基準にポップアップ位置を計算
+    if (contentRect) {
+      // contentRef を基準にポップアップ位置を計算
       // スクロール位置も考慮
-      const scrollTop = mainRef.current?.scrollTop || 0;
+      const scrollTop = contentRef.current?.scrollTop || 0;
       setPopupPosition({
-        x: rect.left - mainRect.left + rect.width / 2,
-        y: rect.bottom - mainRect.top + scrollTop + 8,
+        x: rect.left - contentRect.left + rect.width / 2,
+        y: rect.bottom - contentRect.top + scrollTop + 8,
       });
       setSelection({
         text,
@@ -489,15 +504,15 @@ function MarkdownPreview() {
           >
             {content}
           </ReactMarkdown>
-
-          {popupPosition && (
-            <SelectionPopup
-              position={popupPosition}
-              onSelect={handleSelectType}
-              onClose={handleClosePopup}
-            />
-          )}
         </div>
+
+        {popupPosition && (
+          <SelectionPopup
+            position={popupPosition}
+            onSelect={handleSelectType}
+            onClose={handleClosePopup}
+          />
+        )}
       </div>
 
       {showForm && selection && (
@@ -581,8 +596,7 @@ function MarkdownPreview() {
           flex: 1;
           padding: 24px;
           line-height: 1.6;
-          overflow-y: auto;
-          position: relative;
+          min-height: 0;
         }
 
         .preview-main::selection,

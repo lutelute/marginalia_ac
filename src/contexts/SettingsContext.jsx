@@ -4,8 +4,8 @@ const SettingsContext = createContext(null);
 
 // 環境判定（ビルド時に決定）
 const IS_DEVELOPMENT = import.meta.env.DEV;
-const APP_VERSION = '1.0.3';
-const GITHUB_REPO = 'lutelute/marginalia';
+const APP_VERSION = '1.0.4';
+const GITHUB_REPO = 'lutelute/Marginalia_simple';
 
 const DEFAULT_SETTINGS = {
   // エディタ設定

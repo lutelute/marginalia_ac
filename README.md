@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/lutelute/marginalia/releases">
-    <img src="https://img.shields.io/github/v/release/lutelute/marginalia?style=flat-square" alt="Release">
+  <a href="https://github.com/lutelute/Marginalia_simple/releases">
+    <img src="https://img.shields.io/github/v/release/lutelute/Marginalia_simple?style=flat-square" alt="Release">
   </a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
@@ -52,7 +52,7 @@
 
 ### リリース版（推奨）
 
-[Releases](https://github.com/lutelute/marginalia/releases) から最新版をダウンロード:
+[Releases](https://github.com/lutelute/Marginalia_simple/releases) から最新版をダウンロード:
 
 | OS | ファイル |
 |----|---------|
@@ -63,7 +63,7 @@
 ### 開発版
 
 ```bash
-git clone https://github.com/lutelute/marginalia.git
+git clone https://github.com/lutelute/Marginalia_simple.git
 cd marginalia
 npm install
 npm run dev

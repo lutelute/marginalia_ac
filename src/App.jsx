@@ -11,7 +11,7 @@ import SplitPane from './components/common/SplitPane';
 
 function TopBar() {
   const { settings, updateSettings, openSettings, isDevelopment } = useSettings();
-  const { isSidebarOpen, isEditorOpen, toggleSidebar, toggleEditor } = useAppState();
+  const { isSidebarOpen, isEditorOpen, isAnnotationPanelOpen, toggleSidebar, toggleEditor, toggleAnnotationPanel } = useAppState();
   const isDark = settings.ui.theme === 'dark';
 
   useEffect(() => {
@@ -65,6 +65,13 @@ function TopBar() {
         )}
       </div>
       <div className="top-bar-right">
+        <button
+          className={`top-bar-btn icon-only ${isAnnotationPanelOpen ? 'active' : ''}`}
+          onClick={toggleAnnotationPanel}
+          title={isAnnotationPanelOpen ? '注釈パネルを閉じる' : '注釈パネルを開く'}
+        >
+          <AnnotationPanelIcon />
+        </button>
         <button className="top-bar-btn" onClick={toggleTheme} title={isDark ? 'ライトモード' : 'ダークモード'}>
           {isDark ? <SunIcon /> : <MoonIcon />}
         </button>
@@ -183,6 +190,18 @@ function CodeIcon() {
   );
 }
 
+function AnnotationPanelIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+      <line x1="18" y1="8" x2="20" y2="8" />
+      <line x1="18" y1="12" x2="20" y2="12" />
+      <line x1="18" y1="16" x2="20" y2="16" />
+    </svg>
+  );
+}
+
 function FileTextIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -245,6 +264,10 @@ function AppStateProvider({ children }) {
     const saved = localStorage.getItem('isEditorOpen');
     return saved !== 'false';
   });
+  const [isAnnotationPanelOpen, setIsAnnotationPanelOpen] = useState(() => {
+    const saved = localStorage.getItem('isAnnotationPanelOpen');
+    return saved !== 'false';
+  });
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((prev) => {
@@ -262,8 +285,16 @@ function AppStateProvider({ children }) {
     });
   }, []);
 
+  const toggleAnnotationPanel = useCallback(() => {
+    setIsAnnotationPanelOpen((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('isAnnotationPanelOpen', newValue.toString());
+      return newValue;
+    });
+  }, []);
+
   return (
-    <AppStateContext.Provider value={{ isSidebarOpen, isEditorOpen, toggleSidebar, toggleEditor }}>
+    <AppStateContext.Provider value={{ isSidebarOpen, isEditorOpen, isAnnotationPanelOpen, toggleSidebar, toggleEditor, toggleAnnotationPanel }}>
       {children}
     </AppStateContext.Provider>
   );
@@ -320,7 +351,7 @@ function App() {
 }
 
 function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
-  const { isSidebarOpen, isEditorOpen } = useAppState();
+  const { isSidebarOpen, isEditorOpen, isAnnotationPanelOpen } = useAppState();
 
   return (
     <>
@@ -345,8 +376,11 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           )}
         </div>
 
-        <ResizeHandle onResize={handleAnnotationResize} position="right" />
-        <div className="annotation-panel" style={{ width: annotationWidth }}>
+        {isAnnotationPanelOpen && <ResizeHandle onResize={handleAnnotationResize} position="right" />}
+        <div
+          className={`annotation-panel ${isAnnotationPanelOpen ? 'open' : 'closed'}`}
+          style={{ width: isAnnotationPanelOpen ? annotationWidth : 0 }}
+        >
           <AnnotationPanel />
         </div>
       </div>
@@ -504,16 +538,36 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           }
 
           .sidebar {
-            transition: width 0.2s ease-out;
+            transition: width 0.2s ease-out, min-width 0.2s ease-out;
             overflow: hidden;
           }
 
           .sidebar.closed {
             width: 0 !important;
+            min-width: 0 !important;
+          }
+
+          .main-content.preview-only {
+            flex: 1;
+          }
+
+          .main-content.preview-only > * {
+            width: 100%;
+            height: 100%;
           }
 
           .main-content {
             transition: flex 0.2s ease-out;
+          }
+
+          .annotation-panel {
+            transition: width 0.2s ease-out;
+            overflow: hidden;
+          }
+
+          .annotation-panel.closed {
+            width: 0 !important;
+            min-width: 0 !important;
           }
         `}</style>
     </>

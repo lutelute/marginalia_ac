@@ -17,6 +17,7 @@ function AnnotationPanel() {
   const [newAnnotationType, setNewAnnotationType] = useState('comment');
   const [newAnnotationContent, setNewAnnotationContent] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [sortOrder, setSortOrder] = useState('time');
   const { currentFile } = useFile();
   const {
     annotations,
@@ -40,13 +41,23 @@ function AnnotationPanel() {
     setPendingSelection(null);
   };
 
-  // フィルタリング
-  const filteredAnnotations = annotations.filter((a) => {
-    if (filterType === 'all') return true;
-    if (filterType === 'unresolved') return !a.resolved;
-    if (filterType === 'resolved') return a.resolved;
-    return a.type === filterType;
-  });
+  const filteredAnnotations = annotations
+    .filter((a) => {
+      if (filterType === 'all') return true;
+      if (filterType === 'unresolved') return !a.resolved;
+      if (filterType === 'resolved') return a.resolved;
+      return a.type === filterType;
+    })
+    .sort((a, b) => {
+      if (sortOrder === 'time') {
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      } else {
+        if (a.startLine !== b.startLine) {
+          return a.startLine - b.startLine;
+        }
+        return a.startChar - b.startChar;
+      }
+    });
 
   const unresolvedCount = annotations.filter((a) => !a.resolved).length;
   const resolvedCount = annotations.filter((a) => a.resolved).length;
@@ -78,6 +89,7 @@ function AnnotationPanel() {
 
   return (
     <div className="annotation-panel-container">
+      {/* タブ - 常に上部に固定 */}
       <div className="panel-tabs">
         <button
           className={`tab ${activeTab === 'annotations' ? 'active' : ''}`}
@@ -139,6 +151,7 @@ function AnnotationPanel() {
         </div>
       )}
 
+      {/* フィルターバー - 注釈タブ時のみ表示、固定 */}
       {activeTab === 'annotations' && (
         <div className="filter-bar">
           <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
@@ -151,9 +164,26 @@ function AnnotationPanel() {
             <option value="pending">保留</option>
             <option value="discussion">議論</option>
           </select>
+          <div className="sort-buttons">
+            <button
+              className={`sort-btn ${sortOrder === 'time' ? 'active' : ''}`}
+              onClick={() => setSortOrder('time')}
+              title="時刻順（新しい順）"
+            >
+              🕐
+            </button>
+            <button
+              className={`sort-btn ${sortOrder === 'position' ? 'active' : ''}`}
+              onClick={() => setSortOrder('position')}
+              title="位置順（上から）"
+            >
+              📍
+            </button>
+          </div>
         </div>
       )}
 
+      {/* スクロール可能なコンテンツ領域 */}
       <div className="panel-content">
         {activeTab === 'annotations' && (
           <div className="annotations-list">
@@ -196,12 +226,18 @@ function AnnotationPanel() {
           display: flex;
           flex-direction: column;
           height: 100%;
+          overflow: hidden;
         }
 
+        /* タブ - 上部固定 */
         .panel-tabs {
           display: flex;
           border-bottom: 1px solid var(--border-color);
           flex-shrink: 0;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          background-color: var(--bg-primary);
         }
 
         .tab {
@@ -306,14 +342,19 @@ function AnnotationPanel() {
           background-color: var(--accent-hover);
         }
 
+        /* フィルターバー - 固定 */
         .filter-bar {
           padding: 8px 12px;
           border-bottom: 1px solid var(--border-color);
           flex-shrink: 0;
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          background-color: var(--bg-primary);
         }
 
         .filter-bar select {
-          width: 100%;
+          flex: 1;
           padding: 6px 8px;
           font-size: 12px;
           background-color: var(--bg-tertiary);
@@ -323,9 +364,34 @@ function AnnotationPanel() {
           cursor: pointer;
         }
 
+        .sort-buttons {
+          display: flex;
+          gap: 2px;
+        }
+
+        .sort-btn {
+          padding: 4px 8px;
+          font-size: 14px;
+          border-radius: 4px;
+          background-color: var(--bg-tertiary);
+          color: var(--text-secondary);
+          transition: all 0.2s;
+        }
+
+        .sort-btn:hover {
+          background-color: var(--bg-hover);
+        }
+
+        .sort-btn.active {
+          background-color: var(--accent-color);
+          color: white;
+        }
+
+        /* スクロール可能なコンテンツ */
         .panel-content {
           flex: 1;
           overflow-y: auto;
+          min-height: 0;
         }
 
         .empty-state {
@@ -345,6 +411,10 @@ function AnnotationPanel() {
         }
 
         .annotations-list {
+          padding: 8px 0;
+        }
+
+        .history-list {
           padding: 8px 0;
         }
       `}</style>

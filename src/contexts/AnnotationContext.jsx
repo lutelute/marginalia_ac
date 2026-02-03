@@ -134,6 +134,7 @@ export function AnnotationProvider({ children }) {
       startChar: selection.startChar,
       endChar: selection.endChar,
       selectedText: selection.text,
+      blockId: selection.blockId || null, // ブロック要素へのジャンプ用ID
       content,
       author: 'user',
       createdAt: new Date().toISOString(),

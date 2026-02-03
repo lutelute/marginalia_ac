@@ -1,47 +1,72 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFile } from '../../contexts/FileContext';
+import { useAnnotation } from '../../contexts/AnnotationContext';
 
 function BackupPanel() {
   const { currentFile, openFile } = useFile();
-  const [backups, setBackups] = useState([]);
+  const { annotations } = useAnnotation();
+  const [backupType, setBackupType] = useState('file'); // 'file' | 'annotation'
+  const [fileBackups, setFileBackups] = useState([]);
+  const [annotationBackups, setAnnotationBackups] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [previewContent, setPreviewContent] = useState(null);
   const [previewBackup, setPreviewBackupData] = useState(null);
 
-  // バックアップ一覧を取得
-  const loadBackups = useCallback(async () => {
+  // ファイルバックアップ一覧を取得
+  const loadFileBackups = useCallback(async () => {
     if (!currentFile) return;
-
-    setIsLoading(true);
     try {
       const result = await window.electronAPI.listBackups(currentFile);
       if (result.success) {
-        setBackups(result.backups);
+        setFileBackups(result.backups);
       }
+    } catch (error) {
+      console.error('Failed to load file backups:', error);
+    }
+  }, [currentFile]);
+
+  // 注釈バックアップ一覧を取得
+  const loadAnnotationBackups = useCallback(async () => {
+    if (!currentFile) return;
+    try {
+      const result = await window.electronAPI.listMarginaliaBackups(currentFile);
+      if (result.success) {
+        setAnnotationBackups(result.backups);
+      }
+    } catch (error) {
+      console.error('Failed to load annotation backups:', error);
+    }
+  }, [currentFile]);
+
+  // バックアップを読み込み
+  const loadBackups = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await Promise.all([loadFileBackups(), loadAnnotationBackups()]);
     } finally {
       setIsLoading(false);
     }
-  }, [currentFile]);
+  }, [loadFileBackups, loadAnnotationBackups]);
 
   useEffect(() => {
     loadBackups();
   }, [loadBackups]);
 
-  // バックアップをプレビュー
-  const handlePreview = async (backup) => {
+  // ファイルバックアップをプレビュー
+  const handlePreviewFile = async (backup) => {
     try {
       const result = await window.electronAPI.previewBackup(backup.path);
       if (result.success) {
         setPreviewContent(result.content);
-        setPreviewBackupData(backup);
+        setPreviewBackupData({ ...backup, type: 'file' });
       }
     } catch (error) {
       console.error('Preview failed:', error);
     }
   };
 
-  // バックアップから復元
-  const handleRestore = async (backup) => {
+  // ファイルバックアップから復元
+  const handleRestoreFile = async (backup) => {
     if (!confirm(`${formatDate(backup.createdAt)} のバックアップから復元しますか？\n\n現在の内容はバックアップされます。`)) {
       return;
     }
@@ -49,11 +74,27 @@ function BackupPanel() {
     try {
       const result = await window.electronAPI.restoreBackup(backup.path, currentFile);
       if (result.success) {
-        // ファイルを再読み込み
         await openFile(currentFile);
         loadBackups();
         setPreviewContent(null);
         setPreviewBackupData(null);
+      }
+    } catch (error) {
+      console.error('Restore failed:', error);
+    }
+  };
+
+  // 注釈バックアップから復元
+  const handleRestoreAnnotation = async (backup) => {
+    if (!confirm(`${formatDate(backup.createdAt)} の注釈バックアップから復元しますか？\n\n現在の注釈はバックアップされます。`)) {
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.restoreMarginaliaBackup(backup.path, currentFile);
+      if (result.success) {
+        // ページをリロードして注釈を再読み込み
+        window.location.reload();
       }
     } catch (error) {
       console.error('Restore failed:', error);
@@ -118,55 +159,100 @@ function BackupPanel() {
     );
   }
 
+  const currentBackups = backupType === 'file' ? fileBackups : annotationBackups;
+
   return (
     <div className="backup-panel">
-      <div className="backup-header">
-        <span className="backup-title">バックアップ ({backups.length}件)</span>
-        <button className="create-backup-btn" onClick={handleCreateBackup}>
-          + 作成
+      {/* バックアップ種類の切り替え */}
+      <div className="backup-type-tabs">
+        <button
+          className={`type-tab ${backupType === 'file' ? 'active' : ''}`}
+          onClick={() => setBackupType('file')}
+        >
+          ファイル ({fileBackups.length})
         </button>
+        <button
+          className={`type-tab ${backupType === 'annotation' ? 'active' : ''}`}
+          onClick={() => setBackupType('annotation')}
+        >
+          注釈 ({annotationBackups.length})
+        </button>
+      </div>
+
+      <div className="backup-header">
+        <span className="backup-title">
+          {backupType === 'file' ? 'ファイルバックアップ' : '注釈バックアップ'}
+        </span>
+        {backupType === 'file' && (
+          <button className="create-backup-btn" onClick={handleCreateBackup}>
+            + 作成
+          </button>
+        )}
+      </div>
+
+      <div className="backup-info-bar">
+        {backupType === 'annotation' && (
+          <span className="info-text">
+            現在の注釈: {annotations.length}件
+          </span>
+        )}
       </div>
 
       {isLoading ? (
         <div className="backup-loading">読み込み中...</div>
-      ) : backups.length === 0 ? (
+      ) : currentBackups.length === 0 ? (
         <div className="backup-empty">
           <p>バックアップがありません</p>
-          <p className="hint">保存時に自動でバックアップされます</p>
+          <p className="hint">
+            {backupType === 'file'
+              ? '保存時に自動でバックアップされます'
+              : '注釈保存時に自動でバックアップされます'}
+          </p>
         </div>
       ) : (
         <div className="backup-list">
-          {backups.map((backup) => (
+          {currentBackups.map((backup) => (
             <div
               key={backup.id}
               className={`backup-item ${previewBackup?.id === backup.id ? 'selected' : ''}`}
             >
-              <div className="backup-info" onClick={() => handlePreview(backup)}>
+              <div
+                className="backup-info"
+                onClick={() => backupType === 'file' ? handlePreviewFile(backup) : null}
+              >
                 <div className="backup-date">{formatDate(backup.createdAt)}</div>
-                <div className="backup-size">{formatSize(backup.size)}</div>
+                <div className="backup-size">
+                  {backupType === 'file'
+                    ? formatSize(backup.size)
+                    : `${backup.annotationCount}件の注釈`}
+                </div>
               </div>
               <div className="backup-actions">
                 <button
                   className="restore-btn"
-                  onClick={() => handleRestore(backup)}
+                  onClick={() => backupType === 'file'
+                    ? handleRestoreFile(backup)
+                    : handleRestoreAnnotation(backup)}
                   title="復元"
                 >
                   ↺
                 </button>
-                <button
-                  className="delete-btn"
-                  onClick={() => handleDelete(backup)}
-                  title="削除"
-                >
-                  ×
-                </button>
+                {backupType === 'file' && (
+                  <button
+                    className="delete-btn"
+                    onClick={() => handleDelete(backup)}
+                    title="削除"
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {previewContent && (
+      {previewContent && previewBackup?.type === 'file' && (
         <div className="backup-preview">
           <div className="preview-header">
             <span>プレビュー: {formatDate(previewBackup?.createdAt)}</span>
@@ -177,7 +263,7 @@ function BackupPanel() {
           <pre className="preview-content">{previewContent}</pre>
           <button
             className="restore-preview-btn"
-            onClick={() => handleRestore(previewBackup)}
+            onClick={() => handleRestoreFile(previewBackup)}
           >
             このバージョンを復元
           </button>
@@ -189,6 +275,33 @@ function BackupPanel() {
           display: flex;
           flex-direction: column;
           height: 100%;
+        }
+
+        .backup-type-tabs {
+          display: flex;
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .type-tab {
+          flex: 1;
+          padding: 8px;
+          font-size: 11px;
+          color: var(--text-secondary);
+          background: none;
+          border: none;
+          border-bottom: 2px solid transparent;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .type-tab:hover {
+          color: var(--text-primary);
+          background-color: var(--bg-hover);
+        }
+
+        .type-tab.active {
+          color: var(--accent-color);
+          border-bottom-color: var(--accent-color);
         }
 
         .backup-header {
@@ -203,6 +316,17 @@ function BackupPanel() {
           font-size: 12px;
           font-weight: 600;
           color: var(--text-secondary);
+        }
+
+        .backup-info-bar {
+          padding: 4px 12px;
+          background-color: var(--bg-tertiary);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .info-text {
+          font-size: 10px;
+          color: var(--text-muted);
         }
 
         .create-backup-btn {

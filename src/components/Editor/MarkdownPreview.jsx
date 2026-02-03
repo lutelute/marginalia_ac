@@ -1,6 +1,10 @@
 import React, { useCallback, useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import 'katex/dist/katex.min.css';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
 
@@ -97,24 +101,154 @@ function AnnotationForm({ type, selectedText, onSubmit, onCancel }) {
   );
 }
 
+// 簡易ハッシュ関数（blockId生成用）
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 // 折りたたみ可能なコードブロック
-function CollapsibleCode({ className, children, ...props }) {
+function CollapsibleCode({ className, children, annotations, onAnnotationClick, ...props }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const match = /language-(\w+)/.exec(className || '');
   const language = match ? match[1] : 'code';
+  const codeText = String(children).replace(/\n$/, '');
+
+  // 安定したblockIdを生成（コード内容からハッシュ）
+  const blockId = useMemo(() => `code-${simpleHash(codeText)}`, [codeText]);
+
+  // このコードブロックに関連する注釈を取得（blockIdまたはselectedTextでマッチ）
+  const relatedAnnotations = useMemo(() => {
+    if (!annotations || annotations.length === 0) return [];
+
+    const matches = annotations.filter((a) => {
+      if (a.resolved) return false;
+      // blockIdでマッチ
+      if (a.blockId && a.blockId === blockId) return true;
+      // selectedTextでマッチ（部分一致も許容）
+      if (a.selectedText) {
+        if (a.selectedText === codeText) return true;
+        if (codeText.includes(a.selectedText)) return true;
+        if (a.selectedText.includes(codeText.slice(0, 50))) return true;
+      }
+      return false;
+    });
+
+    // デバッグログ
+    if (matches.length > 0) {
+      console.log('[CollapsibleCode] Found annotations:', matches.length, 'for blockId:', blockId);
+    }
+
+    return matches;
+  }, [annotations, blockId, codeText]);
+
+  // コード内の注釈対象テキストをハイライト表示
+  const renderHighlightedCode = useMemo(() => {
+    // このブロックに関連する注釈を取得（blockIdでマッチし、かつ部分テキスト選択）
+    const inlineAnnotations = relatedAnnotations.filter(a =>
+      a.selectedText &&
+      a.selectedText !== codeText &&
+      codeText.includes(a.selectedText)
+    );
+
+    if (inlineAnnotations.length === 0) {
+      return codeText;
+    }
+
+    // 各注釈のselectedTextを検索してハイライト
+    // まず、マッチ情報を収集
+    const allMatches = [];
+    inlineAnnotations.forEach(annotation => {
+      let searchStart = 0;
+      let index;
+      // 同じテキストが複数回出現する場合、最初のマッチのみ使用
+      index = codeText.indexOf(annotation.selectedText, searchStart);
+      if (index !== -1) {
+        allMatches.push({
+          start: index,
+          end: index + annotation.selectedText.length,
+          annotation
+        });
+      }
+    });
+
+    if (allMatches.length === 0) {
+      return codeText;
+    }
+
+    // 位置でソート
+    allMatches.sort((a, b) => a.start - b.start);
+
+    // 重複を除去（重なりがある場合は最初のものを優先）
+    const filteredMatches = [];
+    let lastEnd = -1;
+    for (const match of allMatches) {
+      if (match.start >= lastEnd) {
+        filteredMatches.push(match);
+        lastEnd = match.end;
+      }
+    }
+
+    // パーツを構築
+    const parts = [];
+    let lastIndex = 0;
+
+    filteredMatches.forEach((match, i) => {
+      // マッチ前のテキスト
+      if (match.start > lastIndex) {
+        parts.push(<span key={`text-${lastIndex}`}>{codeText.slice(lastIndex, match.start)}</span>);
+      }
+      // ハイライト部分
+      const typeInfo = ANNOTATION_TYPES.find(t => t.id === match.annotation.type);
+      parts.push(
+        <span
+          key={`annotation-${match.annotation.id}`}
+          className="code-annotated-text"
+          data-annotation-id={match.annotation.id}
+          style={{ '--highlight-color': typeInfo?.color }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAnnotationClick?.(match.annotation.id);
+          }}
+          title={`${typeInfo?.label}: ${match.annotation.content.slice(0, 50)}...`}
+        >
+          {match.annotation.selectedText}
+        </span>
+      );
+      lastIndex = match.end;
+    });
+
+    // 残りのテキスト
+    if (lastIndex < codeText.length) {
+      parts.push(<span key={`text-end`}>{codeText.slice(lastIndex)}</span>);
+    }
+
+    return parts;
+  }, [codeText, relatedAnnotations, onAnnotationClick]);
 
   return (
-    <div className={`code-block ${isCollapsed ? 'collapsed' : ''}`}>
-      <div className="code-header" onClick={() => setIsCollapsed(!isCollapsed)}>
-        <span className="code-language">{language}</span>
-        <button className="collapse-btn">
-          {isCollapsed ? '▶ 展開' : '▼ 折りたたむ'}
-        </button>
+    <div
+      className={`code-block ${isCollapsed ? 'collapsed' : ''}`}
+      data-block-id={blockId}
+      style={{ position: 'relative' }}
+    >
+      <div className="code-header">
+        <div className="code-header-left" onClick={() => setIsCollapsed(!isCollapsed)}>
+          <span className="code-language">{language}</span>
+          <button className="collapse-btn">
+            {isCollapsed ? '▶ 展開' : '▼ 折りたたむ'}
+          </button>
+        </div>
       </div>
       {!isCollapsed && (
         <pre className={className}>
           <code className={match ? `language-${match[1]}` : ''} {...props}>
-            {children}
+            {renderHighlightedCode}
           </code>
         </pre>
       )}
@@ -122,18 +256,259 @@ function CollapsibleCode({ className, children, ...props }) {
   );
 }
 
+// 数式ブロック
+function MathBlock({ children }) {
+  const mathText = String(children);
+  const blockId = useMemo(() => `math-${simpleHash(mathText)}`, [mathText]);
+
+  return (
+    <div
+      className="math-block-wrapper"
+      data-block-id={blockId}
+      style={{ position: 'relative' }}
+    >
+      <div className="math-block-header">
+        <span className="math-label">数式</span>
+      </div>
+      <div className="math-block-content">{children}</div>
+    </div>
+  );
+}
+
+// テーブルブロック用カウンター（レンダリングごとにリセット）
+let tableCounter = 0;
+
+// テーブルセル内のテキストをハイライト付きでレンダリング
+function HighlightedTableCell({ children, annotations, onAnnotationClick }) {
+  // テーブルセル内のテキストを走査してハイライトを適用
+  const renderHighlightedContent = (content) => {
+    if (!content || typeof content !== 'string') {
+      return content;
+    }
+
+    // インライン注釈を検索
+    const inlineAnnotations = annotations.filter(a =>
+      a.selectedText &&
+      content.includes(a.selectedText) &&
+      !a.resolved
+    );
+
+    if (inlineAnnotations.length === 0) {
+      return content;
+    }
+
+    // マッチ情報を収集
+    const allMatches = [];
+    inlineAnnotations.forEach(annotation => {
+      const index = content.indexOf(annotation.selectedText);
+      if (index !== -1) {
+        allMatches.push({
+          start: index,
+          end: index + annotation.selectedText.length,
+          annotation
+        });
+      }
+    });
+
+    if (allMatches.length === 0) {
+      return content;
+    }
+
+    // 位置でソート
+    allMatches.sort((a, b) => a.start - b.start);
+
+    // 重複を除去
+    const filteredMatches = [];
+    let lastEnd = -1;
+    for (const match of allMatches) {
+      if (match.start >= lastEnd) {
+        filteredMatches.push(match);
+        lastEnd = match.end;
+      }
+    }
+
+    // パーツを構築
+    const parts = [];
+    let lastIndex = 0;
+
+    filteredMatches.forEach((match) => {
+      if (match.start > lastIndex) {
+        parts.push(content.slice(lastIndex, match.start));
+      }
+      const typeInfo = ANNOTATION_TYPES.find(t => t.id === match.annotation.type);
+      parts.push(
+        <span
+          key={`table-annotation-${match.annotation.id}`}
+          className="table-annotated-text"
+          data-annotation-id={match.annotation.id}
+          style={{ '--highlight-color': typeInfo?.color }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAnnotationClick?.(match.annotation.id);
+          }}
+          title={`${typeInfo?.label}: ${match.annotation.content.slice(0, 50)}...`}
+        >
+          {match.annotation.selectedText}
+        </span>
+      );
+      lastIndex = match.end;
+    });
+
+    if (lastIndex < content.length) {
+      parts.push(content.slice(lastIndex));
+    }
+
+    return parts;
+  };
+
+  // childrenを再帰的に処理
+  const processChildren = (node) => {
+    if (typeof node === 'string') {
+      return renderHighlightedContent(node);
+    }
+    if (React.isValidElement(node)) {
+      return React.cloneElement(node, {
+        ...node.props,
+        children: React.Children.map(node.props.children, processChildren)
+      });
+    }
+    if (Array.isArray(node)) {
+      return node.map((child, i) =>
+        typeof child === 'string'
+          ? <React.Fragment key={i}>{renderHighlightedContent(child)}</React.Fragment>
+          : processChildren(child)
+      );
+    }
+    return node;
+  };
+
+  return processChildren(children);
+}
+
+// テーブルブロック
+function TableBlock({ children, annotations, onAnnotationClick }) {
+  const tableRef = useRef(null);
+  const [blockId, setBlockId] = useState(() => `table-${tableCounter++}`);
+
+  // テーブルがマウントされたらハッシュベースのIDに更新
+  useEffect(() => {
+    if (tableRef.current) {
+      const text = tableRef.current.innerText || '';
+      if (text) {
+        const newId = `table-${simpleHash(text)}`;
+        setBlockId(newId);
+      }
+    }
+  }, [children]);
+
+  // このテーブルに関連する注釈を取得
+  const relatedAnnotations = useMemo(() => {
+    if (!annotations || annotations.length === 0) return [];
+
+    const tableText = tableRef.current?.innerText || '';
+
+    const matches = annotations.filter((a) => {
+      if (a.resolved) return false;
+      if (a.blockId && a.blockId === blockId) return true;
+      if (a.blockId && a.blockId.startsWith('table-') && tableText && a.selectedText) {
+        if (tableText.includes(a.selectedText.slice(0, 50))) return true;
+      }
+      if (a.selectedText && tableText.includes(a.selectedText)) {
+        return true;
+      }
+      return false;
+    });
+
+    return matches;
+  }, [annotations, blockId]);
+
+  const hasAnnotation = relatedAnnotations.length > 0;
+
+  // テーブルのchildrenにハイライト処理を適用
+  const highlightedChildren = useMemo(() => {
+    if (!hasAnnotation) return children;
+
+    const inlineAnnotations = relatedAnnotations.filter(a => {
+      const tableText = tableRef.current?.innerText || '';
+      return a.selectedText && a.selectedText !== tableText;
+    });
+
+    if (inlineAnnotations.length === 0) return children;
+
+    const processNode = (node) => {
+      if (typeof node === 'string') {
+        return (
+          <HighlightedTableCell
+            annotations={inlineAnnotations}
+            onAnnotationClick={onAnnotationClick}
+          >
+            {node}
+          </HighlightedTableCell>
+        );
+      }
+      if (React.isValidElement(node)) {
+        const nodeType = node.type;
+        if (nodeType === 'td' || nodeType === 'th') {
+          return React.cloneElement(node, {
+            ...node.props,
+            children: (
+              <HighlightedTableCell
+                annotations={inlineAnnotations}
+                onAnnotationClick={onAnnotationClick}
+              >
+                {node.props.children}
+              </HighlightedTableCell>
+            )
+          });
+        }
+        return React.cloneElement(node, {
+          ...node.props,
+          children: React.Children.map(node.props.children, processNode)
+        });
+      }
+      return node;
+    };
+
+    return React.Children.map(children, processNode);
+  }, [children, hasAnnotation, relatedAnnotations, onAnnotationClick]);
+
+  return (
+    <div
+      className="table-block-wrapper"
+      data-block-id={blockId}
+      style={{ position: 'relative' }}
+    >
+      <div className="table-block-header">
+        <span className="table-label">表</span>
+      </div>
+      <div className="table-block-content" ref={tableRef}>
+        <table>{highlightedChildren}</table>
+      </div>
+    </div>
+  );
+}
+
+// グローバルで既にマッチした注釈IDを追跡（レンダリングごとにリセット）
+const matchedAnnotationIds = new Set();
+
 // 注釈マーカー付きテキストコンポーネント
 function AnnotatedText({ children, annotations, onAnnotationClick }) {
   if (!children || typeof children !== 'string') {
     return children;
   }
 
-  // テキスト内の注釈をハイライト
   const text = children;
   const matches = [];
 
+  // ブロック要素でない注釈のみ対象（blockIdがnull）
+  // かつ、まだマッチしていない注釈のみ
   annotations.forEach((annotation) => {
-    if (annotation.selectedText && !annotation.resolved) {
+    if (
+      annotation.selectedText &&
+      !annotation.resolved &&
+      !annotation.blockId &&
+      !matchedAnnotationIds.has(annotation.id)
+    ) {
       const index = text.indexOf(annotation.selectedText);
       if (index !== -1) {
         matches.push({
@@ -141,6 +516,8 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
           end: index + annotation.selectedText.length,
           annotation,
         });
+        // この注釈はマッチ済みとしてマーク
+        matchedAnnotationIds.add(annotation.id);
       }
     }
   });
@@ -149,14 +526,22 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
     return children;
   }
 
-  // マッチをソート
+  // 重複を防ぐ: 同じ範囲にマッチする注釈は最初の1つだけ
   matches.sort((a, b) => a.start - b.start);
+  const filteredMatches = [];
+  let lastEnd = -1;
 
-  // テキストを分割してハイライト
+  for (const match of matches) {
+    if (match.start >= lastEnd) {
+      filteredMatches.push(match);
+      lastEnd = match.end;
+    }
+  }
+
   const parts = [];
   let lastIndex = 0;
 
-  matches.forEach((match, i) => {
+  filteredMatches.forEach((match, i) => {
     if (match.start > lastIndex) {
       parts.push(text.slice(lastIndex, match.start));
     }
@@ -165,7 +550,7 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
 
     parts.push(
       <span
-        key={i}
+        key={match.annotation.id}
         className="annotated-text"
         data-annotation-id={match.annotation.id}
         style={{ '--highlight-color': typeInfo?.color }}
@@ -190,7 +575,35 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
   return <>{parts}</>;
 }
 
-function MarkdownPreview() {
+// エラーバウンダリ
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('MarkdownPreview Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 20, color: 'red' }}>
+          <h3>エラーが発生しました</h3>
+          <pre>{this.state.error?.toString()}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function MarkdownPreviewInner() {
   const { content, currentFile, openFile, rootPath } = useFile();
   const { annotations, addAnnotation, selectAnnotation, selectedAnnotation } = useAnnotation();
   const [selection, setSelection] = useState(null);
@@ -200,24 +613,90 @@ function MarkdownPreview() {
   const contentRef = useRef(null);
   const mainRef = useRef(null);
 
+  // レンダリングのたびにマッチ追跡をリセット
+  matchedAnnotationIds.clear();
+  tableCounter = 0;
+
   // 未解決の注釈を取得
   const unresolvedAnnotations = useMemo(
     () => annotations.filter((a) => !a.resolved),
     [annotations]
   );
 
-  // 選択された注釈が変更されたときにスクロール
+  // 選択された注釈が変更されたときにスクロール（ジャンプ機能）
   useEffect(() => {
-    if (selectedAnnotation && mainRef.current) {
-      const element = mainRef.current.querySelector(`[data-annotation-id="${selectedAnnotation}"]`);
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // ハイライトエフェクト
-        element.classList.add('highlight-flash');
-        setTimeout(() => element.classList.remove('highlight-flash'), 1500);
+    if (!selectedAnnotation || !mainRef.current) return;
+
+    const annotation = annotations.find(a => a.id === selectedAnnotation);
+    if (!annotation) return;
+
+    let element = null;
+
+    // 1. data-annotation-idで直接検索（インライン注釈）
+    element = mainRef.current.querySelector(`[data-annotation-id="${selectedAnnotation}"]`);
+
+    // 2. blockIdで検索（ブロック要素）
+    if (!element && annotation.blockId) {
+      element = mainRef.current.querySelector(`[data-block-id="${annotation.blockId}"]`);
+    }
+
+    // 3. selectedTextでブロック要素を広範囲検索
+    if (!element && annotation.selectedText) {
+      const searchText = annotation.selectedText.slice(0, 100);
+
+      // コードブロック内を検索
+      const codeBlocks = mainRef.current.querySelectorAll('.code-block');
+      for (const block of codeBlocks) {
+        const codeText = block.querySelector('pre code')?.textContent || '';
+        if (codeText.includes(searchText)) {
+          element = block;
+          break;
+        }
+      }
+
+      // テーブル内を検索
+      if (!element) {
+        const tables = mainRef.current.querySelectorAll('.table-block-wrapper');
+        for (const table of tables) {
+          if (table.textContent?.includes(searchText)) {
+            element = table;
+            break;
+          }
+        }
+      }
+
+      // 数式内を検索
+      if (!element) {
+        const mathBlocks = mainRef.current.querySelectorAll('.math-block-wrapper');
+        for (const math of mathBlocks) {
+          if (math.textContent?.includes(searchText.slice(0, 20))) {
+            element = math;
+            break;
+          }
+        }
       }
     }
-  }, [selectedAnnotation]);
+
+    if (element) {
+      // スクロールを実行
+      setTimeout(() => {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // ハイライトエフェクト（より目立つ）
+        element.classList.add('highlight-flash');
+        element.style.outline = '3px solid var(--accent-color)';
+        element.style.outlineOffset = '4px';
+
+        setTimeout(() => {
+          element.classList.remove('highlight-flash');
+          element.style.outline = '';
+          element.style.outlineOffset = '';
+        }, 2000);
+      }, 100);
+    } else {
+      console.log('[Jump] Could not find element for annotation:', annotation.id);
+    }
+  }, [selectedAnnotation, annotations]);
 
   // リンククリック時の処理
   const handleLinkClick = useCallback((href) => {
@@ -261,10 +740,16 @@ function MarkdownPreview() {
 
   // テキスト選択時の処理
   const handleMouseUp = useCallback((e) => {
-    // コードブロックのヘッダークリックは無視
+    // コードブロックのヘッダークリックは無視（ただし本体部分は許可）
     if (e.target.closest('.code-header')) return;
+    // テーブルヘッダーのクリックは無視
+    if (e.target.closest('.table-block-header')) return;
+    // 数式ヘッダーのクリックは無視
+    if (e.target.closest('.math-block-header')) return;
     // 既存の注釈クリックは無視
     if (e.target.closest('.annotated-text')) return;
+    if (e.target.closest('.code-annotated-text')) return;
+    if (e.target.closest('.table-annotated-text')) return;
 
     const sel = window.getSelection();
     const text = sel?.toString().trim();
@@ -278,6 +763,16 @@ function MarkdownPreview() {
       }
       return;
     }
+
+    // ブロック内かどうかを判定
+    const codeBlock = e.target.closest('.code-block');
+    const tableBlock = e.target.closest('.table-block-wrapper');
+    const mathBlock = e.target.closest('.math-block-wrapper-dynamic');
+
+    let blockId = null;
+    if (codeBlock) blockId = codeBlock.dataset.blockId;
+    else if (tableBlock) blockId = tableBlock.dataset.blockId;
+    else if (mathBlock) blockId = mathBlock.dataset.blockId;
 
     const range = sel.getRangeAt(0);
     const rect = range.getBoundingClientRect();
@@ -297,6 +792,7 @@ function MarkdownPreview() {
         endLine: 1,
         startChar: 0,
         endChar: text.length,
+        blockId, // ブロック内選択の場合に設定
       });
     }
   }, []);
@@ -306,6 +802,50 @@ function MarkdownPreview() {
     setShowForm(true);
     setPopupPosition(null);
   }, []);
+
+  // 数式ブロック（KaTeX）にラッパーを追加
+  useEffect(() => {
+    if (!mainRef.current) return;
+
+    const mathDisplays = mainRef.current.querySelectorAll('.katex-display');
+
+    mathDisplays.forEach((mathEl) => {
+      if (mathEl.dataset.mathProcessed) return;
+      mathEl.dataset.mathProcessed = 'true';
+
+      const mathText = mathEl.textContent || '';
+      const blockId = `math-${simpleHash(mathText)}`;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'math-block-wrapper-dynamic';
+      wrapper.dataset.blockId = blockId;
+      wrapper.style.cssText = `
+        position: relative;
+        margin-bottom: 16px;
+        padding: 8px;
+        padding-left: 12px;
+        border-radius: 6px;
+        background: var(--bg-tertiary, #2d2d2d);
+      `;
+
+      const header = document.createElement('div');
+      header.style.cssText = `
+        margin-bottom: 8px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border-color, #404040);
+      `;
+
+      const label = document.createElement('span');
+      label.style.cssText = 'font-size: 11px; color: #999; font-weight: 600;';
+      label.textContent = '数式';
+
+      header.appendChild(label);
+      wrapper.appendChild(header);
+
+      mathEl.parentNode.insertBefore(wrapper, mathEl);
+      wrapper.appendChild(mathEl);
+    });
+  }, [content]);
 
   const handleAddAnnotation = useCallback((content) => {
     if (selection && formType) {
@@ -346,20 +886,61 @@ function MarkdownPreview() {
         {children}
       </a>
     ),
-    code: ({ inline, className, children, ...props }) => {
-      if (!inline) {
+    pre: (preProps) => {
+      const { children } = preProps;
+      // codeの子要素を取得
+      let codeContent = null;
+      let className = '';
+
+      React.Children.forEach(children, (child) => {
+        if (React.isValidElement(child)) {
+          className = child.props?.className || '';
+          codeContent = child.props?.children;
+        }
+      });
+
+      // コードコンテンツが取得できた場合はCollapsibleCodeで表示
+      if (codeContent !== null && codeContent !== undefined) {
+        const langClass = (typeof className === 'string' && className.includes('language-'))
+          ? className
+          : 'language-text';
+
         return (
-          <CollapsibleCode className={className} {...props}>
-            {children}
+          <CollapsibleCode
+            className={langClass}
+            annotations={annotations}
+            onAnnotationClick={handleAnnotationClick}
+          >
+            {codeContent}
           </CollapsibleCode>
         );
       }
-      return (
-        <code className="inline-code" {...props}>
-          {children}
-        </code>
-      );
+
+      // フォールバック
+      return <pre>{children}</pre>;
     },
+    code: ({ className, children, ...props }) => {
+      // language-* クラスがある場合はコードブロック（preで処理される）
+      const isInline = !className || !className.includes('language-');
+      if (isInline) {
+        return (
+          <code className="inline-code" {...props}>
+            {children}
+          </code>
+        );
+      }
+      // コードブロック用（preコンポーネントが処理するのでそのまま返す）
+      return <code className={className} {...props}>{children}</code>;
+    },
+    // テーブル
+    table: ({ children }) => (
+      <TableBlock
+        annotations={annotations}
+        onAnnotationClick={handleAnnotationClick}
+      >
+        {children}
+      </TableBlock>
+    ),
     p: ({ children }) => (
       <p>
         {React.Children.map(children, (child) => {
@@ -445,7 +1026,7 @@ function MarkdownPreview() {
         })}
       </h3>
     ),
-  }), [handleLinkClick, unresolvedAnnotations, handleAnnotationClick]);
+  }), [handleLinkClick, unresolvedAnnotations, handleAnnotationClick, annotations]);
 
   if (!currentFile) {
     return (
@@ -499,7 +1080,8 @@ function MarkdownPreview() {
 
         <div className="preview-main" ref={mainRef} onMouseUp={handleMouseUp}>
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeRaw, rehypeKatex]}
             components={createAnnotatedComponents()}
           >
             {content}
@@ -647,12 +1229,56 @@ function MarkdownPreview() {
           50% { opacity: 0.6; }
         }
 
+        /* コード内のハイライト */
+        .code-annotated-text {
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 30%, transparent);
+          border-radius: 2px;
+          cursor: pointer;
+          position: relative;
+          padding: 1px 2px;
+          transition: background-color 0.2s;
+        }
+
+        .code-annotated-text:hover {
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 50%, transparent);
+        }
+
+        .code-annotated-text::after {
+          content: '';
+          position: absolute;
+          bottom: -1px;
+          left: 0;
+          right: 0;
+          height: 2px;
+          background-color: var(--highlight-color, rgba(255, 193, 7, 1));
+          border-radius: 1px;
+        }
+
+        /* テーブル内のハイライト */
+        .table-annotated-text {
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 30%, transparent);
+          border-radius: 2px;
+          cursor: pointer;
+          padding: 1px 2px;
+          border-bottom: 2px solid var(--highlight-color, rgba(255, 193, 7, 1));
+          transition: background-color 0.2s;
+        }
+
+        .table-annotated-text:hover {
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 50%, transparent);
+        }
+
         /* コードブロック折りたたみ */
         .code-block {
           margin-bottom: 16px;
           border-radius: 6px;
           overflow: hidden;
           background-color: var(--bg-tertiary);
+          transition: border-color 0.3s;
+        }
+
+        .code-block.has-annotation {
+          /* 左ボーダーはinline styleで適用 */
         }
 
         .code-header {
@@ -662,12 +1288,25 @@ function MarkdownPreview() {
           padding: 8px 12px;
           background-color: var(--bg-secondary);
           border-bottom: 1px solid var(--border-color);
-          cursor: pointer;
           user-select: none;
         }
 
-        .code-header:hover {
-          background-color: var(--bg-hover);
+        .code-header-left {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+          flex-wrap: wrap;
+        }
+
+        .code-header-left:hover {
+          opacity: 0.8;
+        }
+
+        .code-header-right {
+          display: flex;
+          align-items: center;
+          gap: 6px;
         }
 
         .code-language {
@@ -675,6 +1314,32 @@ function MarkdownPreview() {
           font-weight: 600;
           color: var(--text-secondary);
           text-transform: uppercase;
+        }
+
+        /* 注釈インジケーター（控えめ版） */
+        .annotation-indicator-small {
+          font-size: 11px;
+          color: var(--comment-color);
+          margin-left: 4px;
+          cursor: default;
+        }
+
+        .annotation-indicator-small:hover {
+          opacity: 0.8;
+        }
+
+        /* 注釈ハイライトバッジ */
+        .annotation-highlight-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          font-size: 11px;
+          color: #ffc107;
+          margin-left: 8px;
+          padding: 2px 6px;
+          background-color: rgba(255, 193, 7, 0.15);
+          border-radius: 10px;
+          cursor: default;
         }
 
         .collapse-btn {
@@ -689,12 +1354,206 @@ function MarkdownPreview() {
           color: var(--text-primary);
         }
 
+        .code-annotation-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          font-size: 10px;
+          cursor: pointer;
+          transition: transform 0.2s;
+        }
+
+        .code-annotation-badge:hover {
+          transform: scale(1.2);
+        }
+
+        .add-comment-btn {
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 12px;
+          background-color: var(--bg-tertiary);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .add-comment-btn:hover {
+          background-color: var(--accent-color);
+          color: white;
+        }
+
+        .comment-menu-wrapper {
+          position: relative;
+        }
+
+        .comment-type-menu {
+          position: absolute;
+          top: 100%;
+          right: 0;
+          margin-top: 4px;
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: 6px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          z-index: 100;
+          overflow: hidden;
+        }
+
+        .comment-type-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          width: 100%;
+          text-align: left;
+          font-size: 12px;
+          color: var(--text-primary);
+          transition: background-color 0.2s;
+        }
+
+        .comment-type-btn:hover {
+          background-color: var(--btn-color);
+          color: white;
+        }
+
         .code-block pre {
           margin: 0;
           padding: 16px;
           overflow-x: auto;
           background-color: transparent;
           border-radius: 0;
+        }
+
+        /* 数式ブロック */
+        .math-block-wrapper {
+          margin-bottom: 16px;
+          border-radius: 6px;
+          overflow: hidden;
+          background-color: var(--bg-tertiary);
+          transition: border-color 0.3s;
+        }
+
+        .math-block-wrapper.has-annotation {
+          /* 左ボーダーはinline styleで適用 */
+        }
+
+        .math-block-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 12px;
+          background-color: var(--bg-secondary);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .math-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-secondary);
+        }
+
+        .math-header-right {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .math-block-content {
+          padding: 16px;
+          text-align: center;
+        }
+
+        /* KaTeX数式のスタイル調整 */
+        .katex-display {
+          margin: 0;
+          padding: 8px 0;
+        }
+
+        .katex {
+          font-size: 1.1em;
+        }
+
+        /* テーブルブロック */
+        .table-block-wrapper {
+          margin-bottom: 16px;
+          border-radius: 6px;
+          overflow: hidden;
+          background-color: var(--bg-tertiary);
+          transition: border-color 0.3s;
+        }
+
+        .table-block-wrapper.has-annotation {
+          /* 左ボーダーはinline styleで適用 */
+        }
+
+        .table-block-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 12px;
+          background-color: var(--bg-secondary);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .table-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-secondary);
+        }
+
+        .table-header-right {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .table-block-content {
+          padding: 12px;
+          overflow-x: auto;
+        }
+
+        .table-block-content table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 0;
+        }
+
+        .table-block-content th,
+        .table-block-content td {
+          padding: 8px 12px;
+          border: 1px solid var(--border-color);
+          text-align: left;
+        }
+
+        .table-block-content th {
+          background-color: var(--bg-secondary);
+          font-weight: 600;
+        }
+
+        .table-block-content tr:nth-child(even) {
+          background-color: rgba(255, 255, 255, 0.03);
+        }
+
+        /* ブロック要素のハイライトフラッシュ */
+        .code-block.highlight-flash,
+        .math-block-wrapper.highlight-flash,
+        .table-block-wrapper.highlight-flash {
+          animation: blockHighlightFlash 1.5s ease-out;
+        }
+
+        @keyframes blockHighlightFlash {
+          0% {
+            box-shadow: 0 0 20px var(--accent-color);
+            border-color: var(--accent-color);
+          }
+          100% {
+            box-shadow: none;
+          }
         }
 
         .code-block.collapsed {
@@ -947,6 +1806,14 @@ function MarkdownPreview() {
         }
       `}</style>
     </div>
+  );
+}
+
+function MarkdownPreview() {
+  return (
+    <ErrorBoundary>
+      <MarkdownPreviewInner />
+    </ErrorBoundary>
   );
 }
 

@@ -4,6 +4,8 @@ const FileContext = createContext(null);
 
 const RECENT_FOLDERS_KEY = 'marginalia-recent-folders';
 const MAX_RECENT_FOLDERS = 5;
+const IS_DEVELOPMENT = import.meta.env.DEV;
+const DEV_SAMPLES_PATH = '/Users/shigenoburyuto/Documents/GitHub/tool_dev_SGNB/Marginalia_simple/dev-samples';
 
 const initialState = {
   rootPath: null,
@@ -109,6 +111,26 @@ export function FileProvider({ children }) {
       }
     }
   }, []);
+
+  // 開発モード: dev-samplesフォルダを自動的に開く
+  const [devInitialized, setDevInitialized] = useState(false);
+  useEffect(() => {
+    if (IS_DEVELOPMENT && !devInitialized && !state.rootPath) {
+      setDevInitialized(true);
+      const loadDevSamples = async () => {
+        try {
+          dispatch({ type: 'SET_ROOT_PATH', payload: DEV_SAMPLES_PATH });
+          dispatch({ type: 'SET_LOADING', payload: true });
+          const tree = await window.electronAPI.readDirectory(DEV_SAMPLES_PATH);
+          dispatch({ type: 'SET_FILE_TREE', payload: tree });
+          console.log('[DEV] Loaded dev-samples folder automatically');
+        } catch (error) {
+          console.warn('[DEV] Could not load dev-samples:', error.message);
+        }
+      };
+      loadDevSamples();
+    }
+  }, [devInitialized, state.rootPath]);
 
   // 最近のフォルダをlocalStorageに保存
   const saveRecentFolder = useCallback((folderPath) => {

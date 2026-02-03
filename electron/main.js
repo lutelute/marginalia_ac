@@ -113,3 +113,13 @@ ipcMain.handle('fs:createBackup', async (event, filePath) => {
 ipcMain.handle('fs:getFileStats', async (event, filePath) => {
   return await fileSystem.getFileStats(filePath);
 });
+
+// 注釈バックアップ一覧取得
+ipcMain.handle('fs:listMarginaliaBackups', async (event, filePath) => {
+  return await fileSystem.listMarginaliaBackups(filePath);
+});
+
+// 注釈バックアップから復元
+ipcMain.handle('fs:restoreMarginaliaBackup', async (event, backupPath, filePath) => {
+  return await fileSystem.restoreMarginaliaBackup(backupPath, filePath);
+});

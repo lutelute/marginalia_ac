@@ -318,7 +318,7 @@ async function readMarginalia(filePath) {
 }
 
 /**
- * Marginaliaファイルに書き込み
+ * Marginaliaファイルに書き込み（自動バックアップ付き）
  */
 async function writeMarginalia(filePath, data) {
   const marginaliaPath = getMarginaliaPath(filePath);
@@ -326,9 +326,163 @@ async function writeMarginalia(filePath, data) {
 
   try {
     await fs.mkdir(marginaliaDir, { recursive: true });
+
+    // 既存の注釈データがあればバックアップ
+    const fileExists = await exists(marginaliaPath);
+    if (fileExists) {
+      await createMarginaliaBackup(marginaliaPath, filePath);
+    }
+
     const content = JSON.stringify(data, null, 2);
     await fs.writeFile(marginaliaPath, content, 'utf-8');
     return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 注釈データのバックアップを作成
+ */
+async function createMarginaliaBackup(marginaliaPath, originalFilePath) {
+  try {
+    const backupDir = path.join(path.dirname(marginaliaPath), 'annotation-backups');
+    await fs.mkdir(backupDir, { recursive: true });
+
+    const content = await fs.readFile(marginaliaPath, 'utf-8');
+    const existingData = JSON.parse(content);
+
+    // 注釈が空の場合はバックアップしない
+    if (!existingData.annotations || existingData.annotations.length === 0) {
+      return { success: true, skipped: true };
+    }
+
+    const fileName = path.basename(originalFilePath, path.extname(originalFilePath));
+    const fileId = generateFileId(originalFilePath);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupName = `${fileName}_${fileId}_${timestamp}.mrgl.bak`;
+    const backupPath = path.join(backupDir, backupName);
+
+    // バックアップメタデータ付きで保存
+    const backupData = {
+      _tool: 'marginalia-annotation-backup',
+      _version: '1.0.0',
+      originalPath: originalFilePath,
+      marginaliaPath: marginaliaPath,
+      fileName: path.basename(originalFilePath),
+      createdAt: new Date().toISOString(),
+      annotationCount: existingData.annotations?.length || 0,
+      data: existingData,
+    };
+
+    await fs.writeFile(backupPath, JSON.stringify(backupData, null, 2), 'utf-8');
+
+    // 古いバックアップを削除
+    await cleanupOldMarginaliaBackups(backupDir, fileId);
+
+    return { success: true, backupPath };
+  } catch (error) {
+    console.error('Marginalia backup failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 古い注釈バックアップを削除
+ */
+async function cleanupOldMarginaliaBackups(backupDir, fileId) {
+  try {
+    const entries = await fs.readdir(backupDir);
+    const backups = entries
+      .filter((name) => name.includes(fileId) && name.endsWith('.mrgl.bak'))
+      .sort()
+      .reverse();
+
+    // MAX_BACKUPSを超えた古いバックアップを削除
+    if (backups.length > MAX_BACKUPS) {
+      const toDelete = backups.slice(MAX_BACKUPS);
+      for (const backup of toDelete) {
+        await fs.unlink(path.join(backupDir, backup));
+      }
+    }
+  } catch (error) {
+    console.error('Marginalia backup cleanup failed:', error);
+  }
+}
+
+/**
+ * 注釈バックアップ一覧を取得
+ */
+async function listMarginaliaBackups(filePath) {
+  try {
+    const marginaliaPath = getMarginaliaPath(filePath);
+    const backupDir = path.join(path.dirname(marginaliaPath), 'annotation-backups');
+    const fileId = generateFileId(filePath);
+
+    try {
+      await fs.access(backupDir);
+    } catch {
+      return { success: true, backups: [] };
+    }
+
+    const entries = await fs.readdir(backupDir);
+    const backupFiles = entries
+      .filter((name) => name.includes(fileId) && name.endsWith('.mrgl.bak'))
+      .sort()
+      .reverse();
+
+    const backups = [];
+    for (const backupFile of backupFiles) {
+      try {
+        const backupPath = path.join(backupDir, backupFile);
+        const content = await fs.readFile(backupPath, 'utf-8');
+        const data = JSON.parse(content);
+
+        if (data._tool === 'marginalia-annotation-backup') {
+          backups.push({
+            id: backupFile,
+            path: backupPath,
+            fileName: data.fileName,
+            createdAt: data.createdAt,
+            annotationCount: data.annotationCount,
+          });
+        }
+      } catch (e) {
+        // 読み込みエラーは無視
+      }
+    }
+
+    return { success: true, backups };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 注釈バックアップから復元
+ */
+async function restoreMarginaliaBackup(backupPath, filePath) {
+  try {
+    const content = await fs.readFile(backupPath, 'utf-8');
+    const backupData = JSON.parse(content);
+
+    if (backupData._tool !== 'marginalia-annotation-backup') {
+      return { success: false, error: 'Invalid annotation backup file' };
+    }
+
+    const marginaliaPath = getMarginaliaPath(filePath);
+    const marginaliaDir = path.dirname(marginaliaPath);
+
+    // 現在の注釈をバックアップしてから復元
+    const fileExists = await exists(marginaliaPath);
+    if (fileExists) {
+      await createMarginaliaBackup(marginaliaPath, filePath);
+    }
+
+    await fs.mkdir(marginaliaDir, { recursive: true });
+    await fs.writeFile(marginaliaPath, JSON.stringify(backupData.data, null, 2), 'utf-8');
+
+    return { success: true, data: backupData.data };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -400,4 +554,6 @@ module.exports = {
   previewBackup,
   deleteBackup,
   getFileStats,
+  listMarginaliaBackups,
+  restoreMarginaliaBackup,
 };

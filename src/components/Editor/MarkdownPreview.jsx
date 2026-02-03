@@ -158,6 +158,7 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
       <span
         key={i}
         className="annotated-text"
+        data-annotation-id={match.annotation.id}
         style={{ '--highlight-color': typeInfo?.color }}
         onClick={(e) => {
           e.stopPropagation();
@@ -182,7 +183,7 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
 
 function MarkdownPreview() {
   const { content, currentFile, openFile, rootPath } = useFile();
-  const { annotations, addAnnotation, selectAnnotation } = useAnnotation();
+  const { annotations, addAnnotation, selectAnnotation, selectedAnnotation } = useAnnotation();
   const [selection, setSelection] = useState(null);
   const [popupPosition, setPopupPosition] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -195,6 +196,19 @@ function MarkdownPreview() {
     () => annotations.filter((a) => !a.resolved),
     [annotations]
   );
+
+  // 選択された注釈が変更されたときにスクロール
+  useEffect(() => {
+    if (selectedAnnotation && mainRef.current) {
+      const element = mainRef.current.querySelector(`[data-annotation-id="${selectedAnnotation}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // ハイライトエフェクト
+        element.classList.add('highlight-flash');
+        setTimeout(() => element.classList.remove('highlight-flash'), 1500);
+      }
+    }
+  }, [selectedAnnotation]);
 
   // リンククリック時の処理
   const handleLinkClick = useCallback((href) => {
@@ -589,6 +603,21 @@ function MarkdownPreview() {
 
         .annotated-text:hover {
           background-color: color-mix(in srgb, var(--highlight-color) 40%, transparent);
+        }
+
+        .annotated-text.highlight-flash {
+          animation: highlightFlash 1.5s ease-out;
+        }
+
+        @keyframes highlightFlash {
+          0% {
+            background-color: color-mix(in srgb, var(--highlight-color) 70%, transparent);
+            box-shadow: 0 0 10px var(--highlight-color);
+          }
+          100% {
+            background-color: color-mix(in srgb, var(--highlight-color) 25%, transparent);
+            box-shadow: none;
+          }
         }
 
         .annotation-marker {

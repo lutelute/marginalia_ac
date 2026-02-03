@@ -346,6 +346,47 @@ async function exists(filePath) {
   }
 }
 
+/**
+ * ファイルのメタデータを取得
+ */
+async function getFileStats(filePath) {
+  try {
+    const stats = await fs.stat(filePath);
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.split('\n').length;
+    const words = content.split(/\s+/).filter(w => w.length > 0).length;
+    const chars = content.length;
+
+    return {
+      success: true,
+      stats: {
+        fileName: path.basename(filePath),
+        filePath: filePath,
+        size: stats.size,
+        sizeFormatted: formatFileSize(stats.size),
+        created: stats.birthtime.toISOString(),
+        modified: stats.mtime.toISOString(),
+        lines,
+        words,
+        chars,
+      },
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * ファイルサイズをフォーマット
+ */
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 module.exports = {
   readDirectory,
   readFile,
@@ -358,4 +399,5 @@ module.exports = {
   restoreBackup,
   previewBackup,
   deleteBackup,
+  getFileStats,
 };

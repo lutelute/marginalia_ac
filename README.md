@@ -10,85 +10,112 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yourusername/Marginalia/releases">
-    <img src="https://img.shields.io/github/v/release/yourusername/Marginalia?style=flat-square" alt="Release">
+  <a href="https://github.com/lutelute/marginalia/releases">
+    <img src="https://img.shields.io/github/v/release/lutelute/marginalia?style=flat-square" alt="Release">
   </a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
 </p>
 
 ---
 
 ## 機能
 
-- **ファイルツリー**: フォルダを開いてMarkdownファイルを一覧表示
-- **エディタ**: CodeMirror 6ベースのシンタックスハイライト付きエディタ
-- **プレビュー**: リアルタイムMarkdownプレビュー（GFM対応）
-- **注釈システム**: テキスト選択で4種類の注釈を追加可能
-  - コメント: 一般的なメモ
-  - 校閲: 修正提案
-  - 保留: 後で検討
-  - 議論: スレッド形式の議論
-- **履歴管理**: 操作履歴の自動記録
+### エディタ
+- **CodeMirror 6ベース** - シンタックスハイライト、行番号、自動インデント
+- **リアルタイムプレビュー** - GFM（GitHub Flavored Markdown）対応
+- **分割表示** - エディタとプレビューを並べて表示
+- **ファイル情報** - 行数、単語数、文字数、更新日時などのメタデータ表示
 
-## セットアップ
+### 注釈システム
+テキストを選択して4種類の注釈を追加可能：
+- **コメント** - 一般的なメモ
+- **校閲** - 修正提案
+- **保留** - 後で検討
+- **議論** - スレッド形式の議論
+
+注釈をクリックすると該当テキストにジャンプ＆ハイライト表示
+
+### ファイル管理
+- **ファイルツリー** - フォルダを開いてMarkdownファイルを一覧表示
+- **フォルダ履歴** - 最近開いたフォルダを記憶
+- **自動バックアップ** - 保存時に自動でバックアップ作成
+- **履歴管理** - 操作履歴の自動記録
+
+### UI
+- **ダーク/ライトモード** - テーマ切り替え対応
+- **パネルトグル** - サイドバー、エディタの表示/非表示
+- **リサイズ可能** - 各パネルの幅を自由に調整
+- **アップデート通知** - 新バージョンの確認機能
+
+## インストール
+
+### リリース版（推奨）
+
+[Releases](https://github.com/lutelute/marginalia/releases) から最新版をダウンロード:
+
+| OS | ファイル |
+|----|---------|
+| macOS | `Marginalia-x.x.x.dmg` または `.zip` |
+| Windows | `Marginalia-Setup-x.x.x.exe` または `.portable.exe` |
+| Linux | `Marginalia-x.x.x.AppImage` または `.deb` |
+
+### 開発版
 
 ```bash
+git clone https://github.com/lutelute/marginalia.git
+cd marginalia
 npm install
 npm run dev
 ```
 
 ## 使い方
 
-1. 左サイドバーの「フォルダを開く」でMarkdownファイルがあるディレクトリを選択
-2. ファイルツリーからファイルをクリックして開く
-3. 中央ペインでテキストを編集、右側でプレビューを確認
-4. テキストを選択すると右パネルに注釈追加フォームが表示される
-5. 注釈は `.marginalia/` フォルダに自動保存される
+### 基本操作
 
-## 技術スタック
+1. **フォルダを開く** - 左サイドバーの「フォルダを開く」ボタンをクリック
+2. **ファイルを選択** - ファイルツリーからMarkdownファイルをクリック
+3. **編集** - 中央のエディタで編集、プレビューで確認
+4. **保存** - `Cmd/Ctrl + S` または「保存」ボタン
 
-- Electron
-- React
-- Vite
-- CodeMirror 6
-- react-markdown + remark-gfm
+### 注釈の追加
 
-## ディレクトリ構成
+1. エディタまたはプレビューでテキストを選択
+2. ポップアップから注釈タイプを選択
+3. 注釈内容を入力して追加
+4. 右パネルで注釈の管理（返信、解決、削除）
+
+### キーボードショートカット
+
+| 操作 | ショートカット |
+|------|---------------|
+| 保存 | `Cmd/Ctrl + S` |
+| 設定 | `Cmd/Ctrl + ,` |
+
+### パネル操作
+
+TopBar左側のボタンで：
+- サイドバー（ファイルツリー）の表示/非表示
+- エディタの表示/非表示（プレビューのみモード）
+
+## データ保存
+
+### 注釈データ
+
+注釈データは各ファイルと同じディレクトリの `.marginalia` フォルダに保存されます：
 
 ```
-Marginalia_simple/
-├── electron/          # Electronメインプロセス
-├── src/
-│   ├── components/    # Reactコンポーネント
-│   ├── contexts/      # 状態管理
-│   ├── hooks/         # カスタムフック
-│   └── styles/        # スタイル
-└── .marginalia/       # 注釈データ（自動生成）
+your-project/
+├── document.md
+└── .marginalia/
+    ├── document_abc123.mrgl           # 注釈データ
+    └── backups/
+        └── document_abc123_2026-...   # バックアップ
 ```
 
-## ショートカット
+### 設定
 
-- `Cmd/Ctrl + S`: ファイル保存
-- `Cmd/Ctrl + ,`: 設定を開く
-
-## インストール
-
-### リリース版（推奨）
-
-[Releases](https://github.com/yourusername/Marginalia/releases) から最新版をダウンロード:
-
-- **macOS**: `Marginalia-x.x.x.dmg` または `.zip`
-- **Windows**: `Marginalia-Setup-x.x.x.exe` または `.portable.exe`
-- **Linux**: `Marginalia-x.x.x.AppImage` または `.deb`
-
-### 開発版
-
-```bash
-git clone https://github.com/yourusername/Marginalia.git
-cd Marginalia
-npm install
-npm run dev
-```
+アプリケーション設定は `localStorage` に保存されます。
 
 ## ビルド
 
@@ -102,14 +129,15 @@ npm run package:win     # Windows
 npm run package:linux   # Linux
 ```
 
-## アップデート
+## 技術スタック
 
-新しいバージョンがリリースされた場合:
-
-1. [Releases](https://github.com/yourusername/Marginalia/releases) ページを確認
-2. 最新版をダウンロードしてインストール
-3. 注釈データ（`.marginalia/`）は保持されます
+- **Electron** - クロスプラットフォームデスクトップアプリ
+- **React 18** - UIフレームワーク
+- **Vite** - ビルドツール
+- **CodeMirror 6** - エディタエンジン
+- **react-markdown** - Markdownレンダリング
+- **remark-gfm** - GitHub Flavored Markdown対応
 
 ## ライセンス
 
-MIT
+MIT License

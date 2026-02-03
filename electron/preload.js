@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ユーティリティ
   exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),
+  getFileStats: (filePath) => ipcRenderer.invoke('fs:getFileStats', filePath),
 });

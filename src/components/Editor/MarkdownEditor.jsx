@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
@@ -56,8 +56,16 @@ const darkTheme = EditorView.theme({
 function MarkdownEditor() {
   const editorRef = useRef(null);
   const viewRef = useRef(null);
-  const { content, currentFile, updateContent, saveFile, isModified } = useFile();
+  const { content, currentFile, updateContent, saveFile, isModified, fileMetadata, loadFileMetadata } = useFile();
   const { setPendingSelection, annotations } = useAnnotation();
+  const [showMetadata, setShowMetadata] = useState(false);
+
+  // ファイルが変更されたらメタデータを読み込む
+  useEffect(() => {
+    if (currentFile) {
+      loadFileMetadata(currentFile);
+    }
+  }, [currentFile, loadFileMetadata]);
 
   // エディタの初期化
   useEffect(() => {
@@ -170,13 +178,28 @@ function MarkdownEditor() {
     );
   }
 
+  const formatDate = (isoString) => {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    return date.toLocaleString('ja-JP');
+  };
+
   return (
     <div className="markdown-editor">
       <div className="editor-header">
-        <span className="file-name">
-          {currentFile.split('/').pop()}
-          {isModified && <span className="modified-indicator">●</span>}
-        </span>
+        <div className="editor-header-left">
+          <span className="file-name">
+            {currentFile.split('/').pop()}
+            {isModified && <span className="modified-indicator">●</span>}
+          </span>
+          <button
+            className="metadata-btn"
+            onClick={() => setShowMetadata(!showMetadata)}
+            title="ファイル情報"
+          >
+            <InfoIcon />
+          </button>
+        </div>
         <button
           className="save-btn"
           onClick={saveFile}
@@ -185,6 +208,45 @@ function MarkdownEditor() {
           保存
         </button>
       </div>
+
+      {/* メタデータポップアップ */}
+      {showMetadata && fileMetadata && (
+        <div className="metadata-popup">
+          <div className="metadata-row">
+            <span className="metadata-label">ファイル名</span>
+            <span className="metadata-value">{fileMetadata.fileName}</span>
+          </div>
+          <div className="metadata-row">
+            <span className="metadata-label">サイズ</span>
+            <span className="metadata-value">{fileMetadata.sizeFormatted}</span>
+          </div>
+          <div className="metadata-row">
+            <span className="metadata-label">行数</span>
+            <span className="metadata-value">{fileMetadata.lines?.toLocaleString()}</span>
+          </div>
+          <div className="metadata-row">
+            <span className="metadata-label">単語数</span>
+            <span className="metadata-value">{fileMetadata.words?.toLocaleString()}</span>
+          </div>
+          <div className="metadata-row">
+            <span className="metadata-label">文字数</span>
+            <span className="metadata-value">{fileMetadata.chars?.toLocaleString()}</span>
+          </div>
+          <div className="metadata-row">
+            <span className="metadata-label">作成日</span>
+            <span className="metadata-value">{formatDate(fileMetadata.created)}</span>
+          </div>
+          <div className="metadata-row">
+            <span className="metadata-label">更新日</span>
+            <span className="metadata-value">{formatDate(fileMetadata.modified)}</span>
+          </div>
+          <div className="metadata-path">
+            <span className="metadata-label">パス</span>
+            <span className="metadata-value path">{fileMetadata.filePath}</span>
+          </div>
+        </div>
+      )}
+
       <div
         className="editor-container"
         ref={editorRef}
@@ -209,6 +271,12 @@ function MarkdownEditor() {
           flex-shrink: 0;
         }
 
+        .editor-header-left {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
         .file-name {
           font-size: 13px;
           color: var(--text-primary);
@@ -217,6 +285,63 @@ function MarkdownEditor() {
         .modified-indicator {
           color: var(--accent-color);
           margin-left: 6px;
+        }
+
+        .metadata-btn {
+          padding: 4px;
+          border-radius: 4px;
+          color: var(--text-muted);
+          transition: all 0.15s;
+        }
+
+        .metadata-btn:hover {
+          background-color: var(--bg-hover);
+          color: var(--text-primary);
+        }
+
+        .metadata-btn svg {
+          width: 14px;
+          height: 14px;
+        }
+
+        .metadata-popup {
+          background-color: var(--bg-tertiary);
+          border-bottom: 1px solid var(--border-color);
+          padding: 12px 16px;
+          font-size: 12px;
+        }
+
+        .metadata-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 4px 0;
+        }
+
+        .metadata-label {
+          color: var(--text-muted);
+        }
+
+        .metadata-value {
+          color: var(--text-primary);
+          font-family: monospace;
+        }
+
+        .metadata-path {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--border-color);
+        }
+
+        .metadata-path .metadata-label {
+          display: block;
+          margin-bottom: 4px;
+        }
+
+        .metadata-value.path {
+          display: block;
+          word-break: break-all;
+          font-size: 10px;
+          color: var(--text-secondary);
         }
 
         .save-btn {
@@ -247,6 +372,16 @@ function MarkdownEditor() {
         }
       `}</style>
     </div>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
   );
 }
 

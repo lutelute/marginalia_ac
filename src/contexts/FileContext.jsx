@@ -1,6 +1,9 @@
-import React, { createContext, useContext, useReducer, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, useCallback, useState, useEffect } from 'react';
 
 const FileContext = createContext(null);
+
+const RECENT_FOLDERS_KEY = 'marginalia-recent-folders';
+const MAX_RECENT_FOLDERS = 5;
 
 const initialState = {
   rootPath: null,
@@ -89,6 +92,54 @@ function fileReducer(state, action) {
 
 export function FileProvider({ children }) {
   const [state, dispatch] = useReducer(fileReducer, initialState);
+  const [recentFolders, setRecentFolders] = useState([]);
+  const [fileMetadata, setFileMetadata] = useState(null);
+
+  // 起動時に最近のフォルダを読み込み
+  useEffect(() => {
+    const saved = localStorage.getItem(RECENT_FOLDERS_KEY);
+    if (saved) {
+      try {
+        const folders = JSON.parse(saved);
+        if (Array.isArray(folders) && folders.length > 0) {
+          setRecentFolders(folders);
+        }
+      } catch (e) {
+        console.error('Failed to parse recent folders:', e);
+      }
+    }
+  }, []);
+
+  // 最近のフォルダをlocalStorageに保存
+  const saveRecentFolder = useCallback((folderPath) => {
+    setRecentFolders((prev) => {
+      // 既存のリストから同じパスを削除し、先頭に追加
+      const filtered = prev.filter((p) => p !== folderPath);
+      const updated = [folderPath, ...filtered].slice(0, MAX_RECENT_FOLDERS);
+      localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  // パスを指定してディレクトリを開く
+  const openDirectoryByPath = useCallback(async (dirPath) => {
+    try {
+      dispatch({ type: 'SET_ROOT_PATH', payload: dirPath });
+      dispatch({ type: 'SET_LOADING', payload: true });
+
+      const tree = await window.electronAPI.readDirectory(dirPath);
+      dispatch({ type: 'SET_FILE_TREE', payload: tree });
+      saveRecentFolder(dirPath);
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+      // フォルダが存在しない場合、リストから削除
+      setRecentFolders((prev) => {
+        const updated = prev.filter((p) => p !== dirPath);
+        localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(updated));
+        return updated;
+      });
+    }
+  }, [saveRecentFolder]);
 
   const openDirectory = useCallback(async () => {
     try {
@@ -100,8 +151,27 @@ export function FileProvider({ children }) {
 
       const tree = await window.electronAPI.readDirectory(dirPath);
       dispatch({ type: 'SET_FILE_TREE', payload: tree });
+      saveRecentFolder(dirPath);
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: error.message });
+    }
+  }, [saveRecentFolder]);
+
+  // 最近のフォルダをクリア
+  const clearRecentFolders = useCallback(() => {
+    setRecentFolders([]);
+    localStorage.removeItem(RECENT_FOLDERS_KEY);
+  }, []);
+
+  // ファイルメタデータを取得
+  const loadFileMetadata = useCallback(async (filePath) => {
+    try {
+      const result = await window.electronAPI.getFileStats(filePath);
+      if (result.success) {
+        setFileMetadata(result.stats);
+      }
+    } catch (error) {
+      console.error('Failed to load file metadata:', error);
     }
   }, []);
 
@@ -158,11 +228,16 @@ export function FileProvider({ children }) {
   const value = {
     ...state,
     openDirectory,
+    openDirectoryByPath,
     refreshDirectory,
     openFile,
     updateContent,
     saveFile,
     clearError,
+    recentFolders,
+    clearRecentFolders,
+    fileMetadata,
+    loadFileMetadata,
   };
 
   return <FileContext.Provider value={value}>{children}</FileContext.Provider>;

@@ -11,6 +11,7 @@ import SplitPane from './components/common/SplitPane';
 
 function TopBar() {
   const { settings, updateSettings, openSettings, isDevelopment } = useSettings();
+  const { isSidebarOpen, isEditorOpen, toggleSidebar, toggleEditor } = useAppState();
   const isDark = settings.ui.theme === 'dark';
 
   useEffect(() => {
@@ -41,6 +42,22 @@ function TopBar() {
   return (
     <div className="top-bar">
       <div className="top-bar-left">
+        <button
+          className={`top-bar-btn icon-only ${isSidebarOpen ? 'active' : ''}`}
+          onClick={toggleSidebar}
+          title={isSidebarOpen ? 'サイドバーを閉じる' : 'サイドバーを開く'}
+        >
+          <SidebarIcon />
+        </button>
+        <button
+          className={`top-bar-btn icon-only ${isEditorOpen ? 'active' : ''}`}
+          onClick={toggleEditor}
+          title={isEditorOpen ? 'エディタを非表示' : 'エディタを表示'}
+        >
+          <CodeIcon />
+        </button>
+      </div>
+      <div className="top-bar-center">
         <AppLogo />
         <span className="app-title">Marginalia</span>
         {isDevelopment && (
@@ -50,14 +67,21 @@ function TopBar() {
       <div className="top-bar-right">
         <button className="top-bar-btn" onClick={toggleTheme} title={isDark ? 'ライトモード' : 'ダークモード'}>
           {isDark ? <SunIcon /> : <MoonIcon />}
-          <span className="btn-label">{isDark ? 'ライト' : 'ダーク'}</span>
         </button>
         <button className="top-bar-btn" onClick={openSettings} title="設定 (⌘,)">
           <SettingsIcon />
-          <span className="btn-label">設定</span>
         </button>
       </div>
     </div>
+  );
+}
+
+function SidebarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </svg>
   );
 }
 
@@ -125,6 +149,52 @@ function SettingsModalWrapper() {
   return isSettingsOpen ? <SettingsPanel /> : null;
 }
 
+function FolderIcon({ small }) {
+  const size = small ? 14 : 20;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+function CodeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </svg>
+  );
+}
+
+function FileTextIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10 9 9 9 8 9" />
+    </svg>
+  );
+}
+
 function ResizeHandle({ onResize, position }) {
   const handleRef = useRef(null);
   const isDragging = useRef(false);
@@ -163,6 +233,46 @@ function ResizeHandle({ onResize, position }) {
   );
 }
 
+// アプリ全体の状態を管理するContext
+const AppStateContext = React.createContext(null);
+
+function AppStateProvider({ children }) {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem('isSidebarOpen');
+    return saved !== 'false';
+  });
+  const [isEditorOpen, setIsEditorOpen] = useState(() => {
+    const saved = localStorage.getItem('isEditorOpen');
+    return saved !== 'false';
+  });
+
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarOpen((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('isSidebarOpen', newValue.toString());
+      return newValue;
+    });
+  }, []);
+
+  const toggleEditor = useCallback(() => {
+    setIsEditorOpen((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('isEditorOpen', newValue.toString());
+      return newValue;
+    });
+  }, []);
+
+  return (
+    <AppStateContext.Provider value={{ isSidebarOpen, isEditorOpen, toggleSidebar, toggleEditor }}>
+      {children}
+    </AppStateContext.Provider>
+  );
+}
+
+function useAppState() {
+  return React.useContext(AppStateContext);
+}
+
 function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('sidebarWidth');
@@ -192,28 +302,58 @@ function App() {
 
   return (
     <SettingsProvider>
-      <FileProvider>
-        <AnnotationProvider>
-          <div className="app" ref={appRef}>
+      <AppStateProvider>
+        <FileProvider>
+          <AnnotationProvider>
+            <AppContent
+              sidebarWidth={sidebarWidth}
+              annotationWidth={annotationWidth}
+              handleSidebarResize={handleSidebarResize}
+              handleAnnotationResize={handleAnnotationResize}
+              appRef={appRef}
+            />
+          </AnnotationProvider>
+        </FileProvider>
+      </AppStateProvider>
+    </SettingsProvider>
+  );
+}
+
+function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
+  const { isSidebarOpen, isEditorOpen } = useAppState();
+
+  return (
+    <>
+      <div className="app" ref={appRef}>
+        {isSidebarOpen && (
+          <>
             <div className="sidebar" style={{ width: sidebarWidth }}>
               <FileTree />
             </div>
             <ResizeHandle onResize={handleSidebarResize} position="left" />
-            <div className="main-content">
-              <SplitPane
-                left={<MarkdownEditor />}
-                right={<MarkdownPreview />}
-                initialLeftWidth={50}
-              />
-            </div>
-            <ResizeHandle onResize={handleAnnotationResize} position="right" />
-            <div className="annotation-panel" style={{ width: annotationWidth }}>
-              <AnnotationPanel />
-            </div>
-          </div>
-          <TopBar />
-          <SettingsModalWrapper />
-          <style>{`
+          </>
+        )}
+
+        <div className="main-content">
+          {isEditorOpen ? (
+            <SplitPane
+              left={<MarkdownEditor />}
+              right={<MarkdownPreview />}
+              initialLeftWidth={50}
+            />
+          ) : (
+            <MarkdownPreview />
+          )}
+        </div>
+
+        <ResizeHandle onResize={handleAnnotationResize} position="right" />
+        <div className="annotation-panel" style={{ width: annotationWidth }}>
+          <AnnotationPanel />
+        </div>
+      </div>
+      <TopBar />
+      <SettingsModalWrapper />
+      <style>{`
           .resize-handle {
             width: 6px;
             cursor: col-resize;
@@ -264,7 +404,7 @@ function App() {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 16px;
+            padding: 0 16px 0 80px; /* 左側にmacOSウィンドウコントロール用のスペース */
             z-index: 100;
             -webkit-app-region: drag;
           }
@@ -272,7 +412,15 @@ function App() {
           .top-bar-left {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 4px;
+            -webkit-app-region: no-drag;
+          }
+
+          .top-bar-center {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
             -webkit-app-region: no-drag;
           }
 
@@ -317,6 +465,15 @@ function App() {
             height: 16px;
           }
 
+          .top-bar-btn.icon-only {
+            padding: 6px;
+          }
+
+          .top-bar-btn.active {
+            background-color: var(--bg-hover);
+            color: var(--accent-color);
+          }
+
           .btn-label {
             font-size: 12px;
             font-weight: 500;
@@ -347,9 +504,7 @@ function App() {
             height: calc(100vh - 40px) !important;
           }
         `}</style>
-        </AnnotationProvider>
-      </FileProvider>
-    </SettingsProvider>
+    </>
   );
 }
 

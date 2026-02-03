@@ -108,3 +108,8 @@ ipcMain.handle('fs:deleteBackup', async (event, backupPath) => {
 ipcMain.handle('fs:createBackup', async (event, filePath) => {
   return await fileSystem.createBackup(filePath);
 });
+
+// ファイルメタデータ取得
+ipcMain.handle('fs:getFileStats', async (event, filePath) => {
+  return await fileSystem.getFileStats(filePath);
+});

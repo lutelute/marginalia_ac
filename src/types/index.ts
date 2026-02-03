@@ -49,6 +49,9 @@ export interface Annotation {
   endLine: number;
   startChar: number;
   endChar: number;
+  // 文書内の絶対オフセット（同一テキストの複数出現を区別するため）
+  startOffset?: number;
+  endOffset?: number;
   blockId?: string;
   createdAt: string;
   resolved: boolean;
@@ -75,6 +78,8 @@ export interface PendingSelection {
   endLine: number;
   startChar: number;
   endChar: number;
+  startOffset?: number;
+  endOffset?: number;
   blockId?: string;
 }
 

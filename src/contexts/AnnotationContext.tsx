@@ -141,6 +141,9 @@ export function AnnotationProvider({ children }) {
       startChar: selection.startChar,
       endChar: selection.endChar,
       selectedText: selection.text,
+      // 文書内の絶対オフセット（同一テキストの複数出現を区別）
+      startOffset: selection.startOffset ?? null,
+      endOffset: selection.endOffset ?? null,
       blockId: selection.blockId || null, // ブロック要素へのジャンプ用ID
       content,
       author: 'user',

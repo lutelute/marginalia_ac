@@ -491,6 +491,8 @@ function TableBlock({ children, annotations, onAnnotationClick }) {
 
 // グローバルで既にマッチした注釈IDを追跡（レンダリングごとにリセット）
 const matchedAnnotationIds = new Set();
+// 現在のレンダリング中の累積オフセット
+let globalTextOffset = 0;
 
 // 注釈マーカー付きテキストコンポーネント
 function AnnotatedText({ children, annotations, onAnnotationClick }) {
@@ -499,6 +501,12 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
   }
 
   const text = children;
+  const textStartOffset = globalTextOffset;
+  const textEndOffset = textStartOffset + text.length;
+
+  // このテキストノードの処理後にグローバルオフセットを更新
+  globalTextOffset = textEndOffset;
+
   const matches = [];
 
   // ブロック要素でない注釈のみ対象（blockIdがnull）
@@ -510,15 +518,30 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
       !annotation.blockId &&
       !matchedAnnotationIds.has(annotation.id)
     ) {
-      const index = text.indexOf(annotation.selectedText);
-      if (index !== -1) {
-        matches.push({
-          start: index,
-          end: index + annotation.selectedText.length,
-          annotation,
-        });
-        // この注釈はマッチ済みとしてマーク
-        matchedAnnotationIds.add(annotation.id);
+      // オフセットがある場合はオフセットで位置を特定
+      if (annotation.startOffset != null && annotation.endOffset != null) {
+        // このテキストノードの範囲内にあるかチェック
+        if (annotation.startOffset >= textStartOffset && annotation.endOffset <= textEndOffset) {
+          const localStart = annotation.startOffset - textStartOffset;
+          const localEnd = annotation.endOffset - textStartOffset;
+          matches.push({
+            start: localStart,
+            end: localEnd,
+            annotation,
+          });
+          matchedAnnotationIds.add(annotation.id);
+        }
+      } else {
+        // 後方互換: オフセットがない場合は従来のテキストマッチ
+        const index = text.indexOf(annotation.selectedText);
+        if (index !== -1) {
+          matches.push({
+            start: index,
+            end: index + annotation.selectedText.length,
+            annotation,
+          });
+          matchedAnnotationIds.add(annotation.id);
+        }
       }
     }
   });
@@ -624,6 +647,7 @@ function MarkdownPreviewInner() {
   // レンダリングのたびにマッチ追跡をリセット
   matchedAnnotationIds.clear();
   tableCounter = 0;
+  globalTextOffset = 0;
 
   // 未解決の注釈を取得
   const unresolvedAnnotations = useMemo(
@@ -757,6 +781,28 @@ function MarkdownPreviewInner() {
     openFile(targetPath);
   }, [currentFile, rootPath, openFile]);
 
+  // プレビュー内のテキストノードのオフセットを計算するヘルパー
+  const calculateTextOffset = useCallback((container: Node, targetNode: Node, targetOffset: number): number => {
+    let offset = 0;
+
+    const walker = document.createTreeWalker(
+      container,
+      NodeFilter.SHOW_TEXT,
+      null
+    );
+
+    let node = walker.nextNode();
+    while (node) {
+      if (node === targetNode) {
+        return offset + targetOffset;
+      }
+      offset += (node.textContent || '').length;
+      node = walker.nextNode();
+    }
+
+    return offset;
+  }, []);
+
   // テキスト選択時の処理
   const handleMouseUp = useCallback((e) => {
     // コードブロックのヘッダークリックは無視（ただし本体部分は許可）
@@ -797,6 +843,16 @@ function MarkdownPreviewInner() {
     const rect = range.getBoundingClientRect();
     const contentRect = contentRef.current?.getBoundingClientRect();
 
+    // 絶対オフセットを計算（同一テキストの複数出現を区別するため）
+    let startOffset: number | undefined;
+    let endOffset: number | undefined;
+
+    if (mainRef.current && !blockId) {
+      // ブロック外の通常テキストの場合のみオフセットを計算
+      startOffset = calculateTextOffset(mainRef.current, range.startContainer, range.startOffset);
+      endOffset = calculateTextOffset(mainRef.current, range.endContainer, range.endOffset);
+    }
+
     if (contentRect) {
       // contentRef を基準にポップアップ位置を計算
       // スクロール位置も考慮
@@ -811,10 +867,12 @@ function MarkdownPreviewInner() {
         endLine: 1,
         startChar: 0,
         endChar: text.length,
+        startOffset,
+        endOffset,
         blockId, // ブロック内選択の場合に設定
       });
     }
-  }, []);
+  }, [calculateTextOffset]);
 
   const handleSelectType = useCallback((type) => {
     setFormType(type);

@@ -4,9 +4,43 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+
+// Markdownシンタックスハイライト（カラフル版）
+const markdownHighlightStyle = HighlightStyle.define([
+  // 見出し - シアン/ブルー系
+  { tag: tags.heading1, color: '#61afef', fontWeight: 'bold', fontSize: '1.4em' },
+  { tag: tags.heading2, color: '#56b6c2', fontWeight: 'bold', fontSize: '1.25em' },
+  { tag: tags.heading3, color: '#98c379', fontWeight: 'bold', fontSize: '1.1em' },
+  { tag: tags.heading4, color: '#e5c07b', fontWeight: 'bold' },
+  { tag: tags.heading5, color: '#d19a66', fontWeight: 'bold' },
+  { tag: tags.heading6, color: '#c678dd', fontWeight: 'bold' },
+  // 強調
+  { tag: tags.strong, color: '#e5c07b', fontWeight: 'bold' },
+  { tag: tags.emphasis, color: '#c678dd', fontStyle: 'italic' },
+  { tag: tags.strikethrough, color: '#5c6370', textDecoration: 'line-through' },
+  // リンク
+  { tag: tags.link, color: '#61afef', textDecoration: 'underline' },
+  { tag: tags.url, color: '#56b6c2' },
+  // コード
+  { tag: tags.monospace, color: '#98c379', backgroundColor: 'rgba(152, 195, 121, 0.1)' },
+  // 引用
+  { tag: tags.quote, color: '#5c6370', fontStyle: 'italic' },
+  // リスト
+  { tag: tags.list, color: '#e06c75' },
+  // コメント（HTML）
+  { tag: tags.comment, color: '#5c6370', fontStyle: 'italic' },
+  // メタ情報（---など）
+  { tag: tags.meta, color: '#c678dd' },
+  { tag: tags.processingInstruction, color: '#c678dd' },
+  // 特殊文字
+  { tag: tags.special(tags.string), color: '#98c379' },
+  // 区切り線
+  { tag: tags.contentSeparator, color: '#5c6370' },
+]);
 
 const theme = EditorView.theme({
   '&': {
@@ -113,7 +147,7 @@ function MarkdownEditor() {
         highlightActiveLineGutter(),
         history(),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
-        syntaxHighlighting(defaultHighlightStyle),
+        syntaxHighlighting(markdownHighlightStyle),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         theme,
         darkTheme,

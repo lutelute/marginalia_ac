@@ -423,7 +423,7 @@ function SettingsPanel() {
                   </div>
 
                   {/* アップデート確認ボタン */}
-                  {!isDownloading && updateStatus?.status !== 'downloaded' && (
+                  {!isDownloading && updateStatus !== 'downloaded' && (
                     <button
                       className="action-btn update-btn"
                       onClick={checkForUpdates}
@@ -456,7 +456,7 @@ function SettingsPanel() {
                         <>
                           <p className="update-message">新しいバージョンがあります！</p>
                           <p className="update-version">v{updateInfo.latestVersion}</p>
-                          {updateStatus?.status === 'downloaded' ? (
+                          {updateStatus === 'downloaded' ? (
                             <button
                               className="action-btn primary install-btn"
                               onClick={installUpdate}

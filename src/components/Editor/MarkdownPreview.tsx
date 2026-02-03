@@ -1723,27 +1723,52 @@ function MarkdownPreviewInner() {
           margin-bottom: 16px;
           font-weight: 600;
           line-height: 1.25;
-          color: var(--text-primary);
         }
 
-        .preview-main h1 { font-size: 2em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
-        .preview-main h2 { font-size: 1.5em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
-        .preview-main h3 { font-size: 1.25em; }
-        .preview-main h4 { font-size: 1em; }
-        .preview-main h5 { font-size: 0.875em; }
-        .preview-main h6 { font-size: 0.85em; color: var(--text-secondary); }
+        /* 見出しにカラフルなスタイル */
+        .preview-main h1 {
+          font-size: 2em;
+          border-bottom: 2px solid #61afef;
+          padding-bottom: 0.3em;
+          color: #61afef;
+        }
+        .preview-main h2 {
+          font-size: 1.5em;
+          border-bottom: 1px solid #56b6c2;
+          padding-bottom: 0.3em;
+          color: #56b6c2;
+        }
+        .preview-main h3 {
+          font-size: 1.25em;
+          color: #98c379;
+        }
+        .preview-main h4 {
+          font-size: 1em;
+          color: #e5c07b;
+        }
+        .preview-main h5 {
+          font-size: 0.875em;
+          color: #d19a66;
+        }
+        .preview-main h6 {
+          font-size: 0.85em;
+          color: #c678dd;
+        }
 
         .preview-main p {
           margin-bottom: 16px;
         }
 
         .preview-main a {
-          color: var(--accent-color);
+          color: #61afef;
           text-decoration: none;
+          border-bottom: 1px dotted #61afef;
+          transition: all 0.2s;
         }
 
         .preview-main a:hover {
-          text-decoration: underline;
+          color: #8cc8f7;
+          border-bottom-style: solid;
         }
 
         .preview-main ul,
@@ -1758,9 +1783,12 @@ function MarkdownPreviewInner() {
 
         .preview-main blockquote {
           margin: 0 0 16px;
-          padding: 0 1em;
-          color: var(--text-secondary);
-          border-left: 4px solid var(--border-color);
+          padding: 12px 16px;
+          color: #abb2bf;
+          border-left: 4px solid #c678dd;
+          background-color: rgba(198, 120, 221, 0.08);
+          border-radius: 0 6px 6px 0;
+          font-style: italic;
         }
 
         .preview-main pre {
@@ -1777,9 +1805,12 @@ function MarkdownPreviewInner() {
         }
 
         .preview-main .inline-code {
-          background-color: var(--bg-tertiary);
-          padding: 0.2em 0.4em;
-          border-radius: 3px;
+          background-color: rgba(152, 195, 121, 0.15);
+          color: #98c379;
+          padding: 0.2em 0.5em;
+          border-radius: 4px;
+          font-size: 0.9em;
+          border: 1px solid rgba(152, 195, 121, 0.2);
         }
 
         .preview-main table {
@@ -1805,9 +1836,34 @@ function MarkdownPreviewInner() {
 
         .preview-main hr {
           border: none;
-          height: 1px;
-          background-color: var(--border-color);
+          height: 2px;
+          background: linear-gradient(to right, #61afef, #56b6c2, #98c379, #e5c07b, #c678dd);
           margin: 24px 0;
+          border-radius: 2px;
+        }
+
+        /* 強調テキスト */
+        .preview-main strong {
+          color: #e5c07b;
+          font-weight: 700;
+        }
+
+        .preview-main em {
+          color: #c678dd;
+          font-style: italic;
+        }
+
+        .preview-main del {
+          color: #5c6370;
+          text-decoration: line-through;
+        }
+
+        /* マーク/ハイライト */
+        .preview-main mark {
+          background-color: rgba(229, 192, 123, 0.3);
+          color: var(--text-primary);
+          padding: 0.1em 0.3em;
+          border-radius: 3px;
         }
 
         .preview-main img {
@@ -1817,6 +1873,59 @@ function MarkdownPreviewInner() {
 
         .preview-main input[type="checkbox"] {
           margin-right: 8px;
+        }
+
+        /* レスポンシブ対応 */
+        @media (max-width: 900px) {
+          .preview-main {
+            padding: 24px 24px;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .preview-main {
+            padding: 16px 16px;
+            font-size: 14px;
+            line-height: 1.7;
+          }
+
+          .annotation-sidebar {
+            width: 28px;
+            padding: 6px 2px;
+          }
+
+          .sidebar-marker {
+            width: 20px;
+            height: 20px;
+            font-size: 10px;
+          }
+
+          .selection-popup {
+            flex-wrap: wrap;
+            max-width: 200px;
+          }
+
+          .popup-btn {
+            padding: 6px 10px;
+          }
+
+          .popup-label {
+            font-size: 9px;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .preview-main {
+            padding: 12px 12px;
+          }
+
+          .preview-main h1 { font-size: 1.6em; }
+          .preview-main h2 { font-size: 1.3em; }
+          .preview-main h3 { font-size: 1.1em; }
+
+          .annotation-sidebar {
+            display: none;
+          }
         }
       `}</style>
     </div>

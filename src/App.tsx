@@ -679,6 +679,67 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             width: 0 !important;
             min-width: 0 !important;
           }
+
+          /* レスポンシブ対応 */
+          @media (max-width: 900px) {
+            .mode-toggle-btn span {
+              display: none;
+            }
+
+            .mode-toggle-btn {
+              padding: 4px 8px;
+            }
+
+            .top-bar {
+              padding: 0 8px 0 68px;
+            }
+
+            .app-title {
+              font-size: 12px;
+            }
+          }
+
+          @media (max-width: 768px) {
+            .top-bar {
+              padding: 0 8px 0 60px;
+            }
+
+            .mode-toggle-group {
+              margin-left: 4px;
+            }
+
+            .btn-group {
+              padding: 1px;
+            }
+
+            .top-bar-btn {
+              padding: 4px 5px;
+            }
+
+            .top-bar-btn svg {
+              width: 14px;
+              height: 14px;
+            }
+
+            .app-title {
+              display: none;
+            }
+
+            .env-badge {
+              font-size: 7px;
+              padding: 1px 4px;
+            }
+          }
+
+          @media (max-width: 480px) {
+            .mode-toggle-group {
+              display: none;
+            }
+
+            .top-bar {
+              padding: 0 6px 0 50px;
+            }
+          }
         `}</style>
     </>
   );

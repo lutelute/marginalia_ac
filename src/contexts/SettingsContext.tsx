@@ -186,59 +186,19 @@ export function SettingsProvider({ children }) {
   // アップデート確認
   const [updateInfo, setUpdateInfo] = useState(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [isReadyToInstall, setIsReadyToInstall] = useState(false);
 
-  // Electronアップデートイベントを監視
+  // Electronアップデート進捗イベントを監視
   useEffect(() => {
     if (!isElectron()) return;
 
-    const cleanup = window.electronAPI?.onUpdateStatus((data: UpdateStatus) => {
-      setUpdateStatus(data);
-
-      switch (data.status) {
-        case 'checking':
-          setIsCheckingUpdate(true);
-          break;
-        case 'available':
-          setIsCheckingUpdate(false);
-          setUpdateInfo({
-            hasUpdate: true,
-            currentVersion: APP_VERSION,
-            latestVersion: data.version,
-            releaseName: data.releaseName,
-            error: null,
-          });
-          break;
-        case 'not-available':
-          setIsCheckingUpdate(false);
-          setUpdateInfo({
-            hasUpdate: false,
-            currentVersion: APP_VERSION,
-            latestVersion: data.version,
-            error: null,
-          });
-          break;
-        case 'downloading':
-          setIsDownloading(true);
-          setDownloadProgress(data.percent);
-          break;
-        case 'downloaded':
-          setIsDownloading(false);
-          setDownloadProgress(100);
-          break;
-        case 'error':
-          setIsCheckingUpdate(false);
-          setIsDownloading(false);
-          setUpdateInfo({
-            hasUpdate: false,
-            currentVersion: APP_VERSION,
-            latestVersion: APP_VERSION,
-            error: data.message,
-          });
-          break;
-      }
+    const cleanup = window.electronAPI?.onUpdateProgress((data: { percent: number; downloadedMB: string; totalMB: string }) => {
+      setDownloadProgress(data.percent);
     });
 
     return () => {
@@ -247,62 +207,121 @@ export function SettingsProvider({ children }) {
   }, []);
 
   const checkForUpdates = useCallback(async () => {
-    if (isElectron()) {
-      // Electronアプリの場合はelectron-updaterを使用
-      setIsCheckingUpdate(true);
-      try {
-        const result = await window.electronAPI?.checkForUpdates();
-        if (!result?.success) {
+    if (!isElectron()) return null;
+
+    setIsCheckingUpdate(true);
+    setUpdateStatus('checking');
+    try {
+      const result = await window.electronAPI?.checkForUpdates();
+
+      if (result?.success && result.data) {
+        const data = result.data;
+        if (data.available) {
+          setUpdateInfo({
+            hasUpdate: true,
+            currentVersion: APP_VERSION,
+            latestVersion: data.version,
+            releaseName: data.releaseName,
+            releaseUrl: data.releaseUrl,
+            error: null,
+          });
+          setDownloadUrl(data.downloadUrl);
+          setUpdateStatus('available');
+        } else {
           setUpdateInfo({
             hasUpdate: false,
             currentVersion: APP_VERSION,
-            latestVersion: APP_VERSION,
-            error: result?.error || 'アップデート確認に失敗しました',
+            latestVersion: data.version || APP_VERSION,
+            error: null,
           });
-          setIsCheckingUpdate(false);
+          setUpdateStatus('not-available');
         }
-        // 成功時はonUpdateStatusコールバックで処理される
-      } catch (error) {
-        setIsCheckingUpdate(false);
+      } else {
         setUpdateInfo({
           hasUpdate: false,
           currentVersion: APP_VERSION,
           latestVersion: APP_VERSION,
-          error: 'アップデート確認に失敗しました',
+          error: result?.data?.error || result?.error || 'アップデート確認に失敗しました',
         });
+        setUpdateStatus('error');
       }
+    } catch (error) {
+      setUpdateInfo({
+        hasUpdate: false,
+        currentVersion: APP_VERSION,
+        latestVersion: APP_VERSION,
+        error: 'アップデート確認に失敗しました',
+      });
+      setUpdateStatus('error');
+    } finally {
+      setIsCheckingUpdate(false);
     }
     return null;
   }, []);
 
   // アップデートをダウンロード
   const downloadUpdate = useCallback(async () => {
-    if (!isElectron()) return;
+    if (!isElectron() || !downloadUrl) return;
+
     setIsDownloading(true);
     setDownloadProgress(0);
+    setUpdateStatus('downloading');
+
     try {
-      const result = await window.electronAPI?.downloadUpdate();
-      if (!result?.success) {
+      const result = await window.electronAPI?.downloadUpdate(downloadUrl);
+      if (result?.success) {
+        setIsDownloading(false);
+        setDownloadProgress(100);
+        setIsReadyToInstall(true);
+        setUpdateStatus('downloaded');
+      } else {
         setIsDownloading(false);
         setUpdateInfo(prev => ({
           ...prev,
           error: result?.error || 'ダウンロードに失敗しました',
         }));
+        setUpdateStatus('error');
       }
-      // 成功時はonUpdateStatusコールバックで処理される
     } catch (error) {
       setIsDownloading(false);
       setUpdateInfo(prev => ({
         ...prev,
         error: 'ダウンロードに失敗しました',
       }));
+      setUpdateStatus('error');
     }
-  }, []);
+  }, [downloadUrl]);
 
-  // アップデートをインストールして再起動
-  const installUpdate = useCallback(() => {
+  // アップデートをインストール
+  const installUpdate = useCallback(async () => {
     if (!isElectron()) return;
-    window.electronAPI?.installUpdate();
+
+    setIsInstalling(true);
+    setUpdateStatus('installing');
+
+    try {
+      const result = await window.electronAPI?.installUpdate();
+      if (result?.success) {
+        // インストール成功、再起動が必要
+        setUpdateStatus('installed');
+        // 自動で再起動
+        window.electronAPI?.restartApp();
+      } else {
+        setIsInstalling(false);
+        setUpdateInfo(prev => ({
+          ...prev,
+          error: result?.error || 'インストールに失敗しました',
+        }));
+        setUpdateStatus('error');
+      }
+    } catch (error) {
+      setIsInstalling(false);
+      setUpdateInfo(prev => ({
+        ...prev,
+        error: 'インストールに失敗しました',
+      }));
+      setUpdateStatus('error');
+    }
   }, []);
 
   // 設定モーダルの開閉

@@ -30,13 +30,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // アップデート操作
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
-  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  downloadUpdate: (downloadUrl) => ipcRenderer.invoke('update:download', downloadUrl),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  restartApp: () => ipcRenderer.invoke('update:restart'),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
-  // アップデートイベントリスナー
-  onUpdateStatus: (callback) => {
-    ipcRenderer.on('update-status', (event, data) => callback(data));
-    return () => ipcRenderer.removeAllListeners('update-status');
+  // アップデート進捗イベントリスナー
+  onUpdateProgress: (callback) => {
+    ipcRenderer.on('update-progress', (event, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('update-progress');
   },
 });

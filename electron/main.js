@@ -1,73 +1,15 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fileSystem = require('./fileSystem');
-const { autoUpdater } = require('electron-updater');
+const {
+  checkForUpdates,
+  downloadUpdate,
+  installUpdate,
+  startupCleanup,
+  restartApp,
+} = require('./updateManager');
 
 let mainWindow;
-
-// Auto Updater 設定
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-
-// ログ設定
-autoUpdater.logger = console;
-
-// アップデートイベント
-autoUpdater.on('checking-for-update', () => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', { status: 'checking' });
-  }
-});
-
-autoUpdater.on('update-available', (info) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'available',
-      version: info.version,
-      releaseNotes: info.releaseNotes,
-      releaseName: info.releaseName,
-    });
-  }
-});
-
-autoUpdater.on('update-not-available', (info) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'not-available',
-      version: info.version,
-    });
-  }
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'downloading',
-      percent: progressObj.percent,
-      bytesPerSecond: progressObj.bytesPerSecond,
-      total: progressObj.total,
-      transferred: progressObj.transferred,
-    });
-  }
-});
-
-autoUpdater.on('update-downloaded', (info) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'downloaded',
-      version: info.version,
-    });
-  }
-});
-
-autoUpdater.on('error', (err) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'error',
-      message: err.message,
-    });
-  }
-});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -94,6 +36,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+
+  // 起動時に古いアップデートファイルをクリーンアップ
+  startupCleanup();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -194,7 +139,7 @@ ipcMain.handle('fs:restoreMarginaliaBackup', async (event, backupPath, filePath)
 // アップデート確認
 ipcMain.handle('update:check', async () => {
   try {
-    const result = await autoUpdater.checkForUpdates();
+    const result = await checkForUpdates();
     return { success: true, data: result };
   } catch (error) {
     return { success: false, error: error.message };
@@ -202,18 +147,33 @@ ipcMain.handle('update:check', async () => {
 });
 
 // アップデートダウンロード
-ipcMain.handle('update:download', async () => {
+ipcMain.handle('update:download', async (event, downloadUrl) => {
   try {
-    await autoUpdater.downloadUpdate();
-    return { success: true };
+    const result = await downloadUpdate(downloadUrl, (percent, downloadedMB, totalMB) => {
+      // 進捗をレンダラーに送信
+      if (mainWindow) {
+        mainWindow.webContents.send('update-progress', { percent, downloadedMB, totalMB });
+      }
+    });
+    return result;
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-// アップデートインストール & 再起動
-ipcMain.handle('update:install', () => {
-  autoUpdater.quitAndInstall(false, true);
+// アップデートインストール
+ipcMain.handle('update:install', async () => {
+  try {
+    const result = await installUpdate();
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// アプリを再起動
+ipcMain.handle('update:restart', () => {
+  restartApp();
 });
 
 // アプリバージョン取得

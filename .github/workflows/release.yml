@@ -50,43 +50,71 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Artifacts
+      - name: List release files
+        run: ls -la release/
+
+      - name: Upload macOS artifacts
+        if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.os }}
+          name: macos-release
           path: |
             release/*.dmg
             release/*.zip
+          if-no-files-found: error
+
+      - name: Upload Windows artifacts
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
             release/*.exe
+          if-no-files-found: error
+
+      - name: Upload Linux artifacts
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: |
             release/*.AppImage
             release/*.deb
-            release/*.yml
-            release/*.blockmap
+          if-no-files-found: error
 
   publish:
     needs: release
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all artifacts
+      - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          name: macos-release
+          path: dist
 
-      - name: List artifacts
-        run: ls -la artifacts/
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: dist
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: dist
+
+      - name: List all artifacts
+        run: ls -la dist/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/*.dmg
-            artifacts/*.zip
-            artifacts/*.exe
-            artifacts/*.AppImage
-            artifacts/*.deb
+          files: dist/*
           draft: false
           prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

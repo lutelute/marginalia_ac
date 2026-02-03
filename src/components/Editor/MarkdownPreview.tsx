@@ -491,8 +491,8 @@ function TableBlock({ children, annotations, onAnnotationClick }) {
 
 // グローバルで既にマッチした注釈IDを追跡（レンダリングごとにリセット）
 const matchedAnnotationIds = new Set();
-// 現在のレンダリング中の累積オフセット
-let globalTextOffset = 0;
+// 各テキストの出現回数を追跡（レンダリングごとにリセット）
+const textOccurrenceCount = new Map<string, number>();
 
 // 注釈マーカー付きテキストコンポーネント
 function AnnotatedText({ children, annotations, onAnnotationClick }) {
@@ -501,12 +501,6 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
   }
 
   const text = children;
-  const textStartOffset = globalTextOffset;
-  const textEndOffset = textStartOffset + text.length;
-
-  // このテキストノードの処理後にグローバルオフセットを更新
-  globalTextOffset = textEndOffset;
-
   const matches = [];
 
   // ブロック要素でない注釈のみ対象（blockIdがnull）
@@ -518,30 +512,31 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
       !annotation.blockId &&
       !matchedAnnotationIds.has(annotation.id)
     ) {
-      // オフセットがある場合はオフセットで位置を特定
-      if (annotation.startOffset != null && annotation.endOffset != null) {
-        // このテキストノードの範囲内にあるかチェック
-        if (annotation.startOffset >= textStartOffset && annotation.endOffset <= textEndOffset) {
-          const localStart = annotation.startOffset - textStartOffset;
-          const localEnd = annotation.endOffset - textStartOffset;
+      const searchText = annotation.selectedText;
+      let searchStart = 0;
+      let foundIndex = -1;
+      let currentOccurrence = 0;
+      const targetOccurrence = annotation.occurrenceIndex ?? 0;
+
+      // このテキストノード内で該当テキストを検索
+      while ((foundIndex = text.indexOf(searchText, searchStart)) !== -1) {
+        // グローバルな出現回数を取得・更新
+        const globalCount = textOccurrenceCount.get(searchText) || 0;
+        textOccurrenceCount.set(searchText, globalCount + 1);
+
+        // 目的の出現番号と一致するかチェック
+        if (globalCount === targetOccurrence) {
           matches.push({
-            start: localStart,
-            end: localEnd,
+            start: foundIndex,
+            end: foundIndex + searchText.length,
             annotation,
           });
           matchedAnnotationIds.add(annotation.id);
+          break;
         }
-      } else {
-        // 後方互換: オフセットがない場合は従来のテキストマッチ
-        const index = text.indexOf(annotation.selectedText);
-        if (index !== -1) {
-          matches.push({
-            start: index,
-            end: index + annotation.selectedText.length,
-            annotation,
-          });
-          matchedAnnotationIds.add(annotation.id);
-        }
+
+        searchStart = foundIndex + 1;
+        currentOccurrence++;
       }
     }
   });
@@ -646,8 +641,8 @@ function MarkdownPreviewInner() {
 
   // レンダリングのたびにマッチ追跡をリセット
   matchedAnnotationIds.clear();
+  textOccurrenceCount.clear();
   tableCounter = 0;
-  globalTextOffset = 0;
 
   // 未解決の注釈を取得
   const unresolvedAnnotations = useMemo(
@@ -781,9 +776,10 @@ function MarkdownPreviewInner() {
     openFile(targetPath);
   }, [currentFile, rootPath, openFile]);
 
-  // プレビュー内のテキストノードのオフセットを計算するヘルパー
-  const calculateTextOffset = useCallback((container: Node, targetNode: Node, targetOffset: number): number => {
-    let offset = 0;
+  // 選択されたテキストが文書内で何番目の出現かを計算
+  const calculateOccurrenceIndex = useCallback((container: Node, selectedText: string, selectionStartNode: Node, selectionStartOffset: number): number => {
+    let occurrenceIndex = 0;
+    let foundTarget = false;
 
     const walker = document.createTreeWalker(
       container,
@@ -792,15 +788,41 @@ function MarkdownPreviewInner() {
     );
 
     let node = walker.nextNode();
-    while (node) {
-      if (node === targetNode) {
-        return offset + targetOffset;
+    while (node && !foundTarget) {
+      const nodeText = node.textContent || '';
+
+      if (node === selectionStartNode) {
+        // 選択開始ノード: 選択位置より前の出現をカウント
+        let searchStart = 0;
+        let index;
+        while ((index = nodeText.indexOf(selectedText, searchStart)) !== -1) {
+          if (index < selectionStartOffset) {
+            occurrenceIndex++;
+            searchStart = index + 1;
+          } else if (index === selectionStartOffset) {
+            foundTarget = true;
+            break;
+          } else {
+            break;
+          }
+        }
+        if (!foundTarget) {
+          foundTarget = true; // 選択開始ノードを過ぎたら終了
+        }
+      } else {
+        // 選択開始ノードより前のノード: 全ての出現をカウント
+        let searchStart = 0;
+        let index;
+        while ((index = nodeText.indexOf(selectedText, searchStart)) !== -1) {
+          occurrenceIndex++;
+          searchStart = index + 1;
+        }
       }
-      offset += (node.textContent || '').length;
+
       node = walker.nextNode();
     }
 
-    return offset;
+    return occurrenceIndex;
   }, []);
 
   // テキスト選択時の処理
@@ -843,14 +865,17 @@ function MarkdownPreviewInner() {
     const rect = range.getBoundingClientRect();
     const contentRect = contentRef.current?.getBoundingClientRect();
 
-    // 絶対オフセットを計算（同一テキストの複数出現を区別するため）
-    let startOffset: number | undefined;
-    let endOffset: number | undefined;
+    // 同一テキストの何番目の出現かを計算
+    let occurrenceIndex: number | undefined;
 
     if (mainRef.current && !blockId) {
-      // ブロック外の通常テキストの場合のみオフセットを計算
-      startOffset = calculateTextOffset(mainRef.current, range.startContainer, range.startOffset);
-      endOffset = calculateTextOffset(mainRef.current, range.endContainer, range.endOffset);
+      // ブロック外の通常テキストの場合のみ出現番号を計算
+      occurrenceIndex = calculateOccurrenceIndex(
+        mainRef.current,
+        text,
+        range.startContainer,
+        range.startOffset
+      );
     }
 
     if (contentRect) {
@@ -867,12 +892,11 @@ function MarkdownPreviewInner() {
         endLine: 1,
         startChar: 0,
         endChar: text.length,
-        startOffset,
-        endOffset,
+        occurrenceIndex,
         blockId, // ブロック内選択の場合に設定
       });
     }
-  }, [calculateTextOffset]);
+  }, [calculateOccurrenceIndex]);
 
   const handleSelectType = useCallback((type) => {
     setFormType(type);

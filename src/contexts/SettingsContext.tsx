@@ -6,8 +6,8 @@ const SettingsContext = createContext(null);
 
 // 環境判定（ビルド時に決定）
 const IS_DEVELOPMENT = import.meta.env.DEV;
-const APP_VERSION = '1.0.9';
-const GITHUB_REPO = 'lutelute/Marginalia';
+const APP_VERSION = '1.0.10';
+const GITHUB_REPO = 'lutelute/marginalia_ac';
 
 // Electronアプリかどうかを判定
 const isElectron = () => {

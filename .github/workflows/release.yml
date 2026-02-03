@@ -13,6 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
 
@@ -50,8 +51,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: List release files
+      - name: List release files (Unix)
+        if: matrix.os != 'windows-latest'
         run: ls -la release/
+
+      - name: List release files (Windows)
+        if: matrix.os == 'windows-latest'
+        run: dir release\
+        shell: cmd
 
       - name: Upload macOS artifacts
         if: matrix.os == 'macos-latest'

@@ -26,9 +26,20 @@ function CommentThread({ annotation, isSelected }) {
 
   // 選択時に自動展開＆スクロール
   useEffect(() => {
-    if (isSelected) {
+    if (isSelected && threadRef.current) {
       setIsExpanded(true);
-      threadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // 親のスクロールコンテナ内でのみスクロール
+      const container = threadRef.current.closest('.panel-content');
+      if (container) {
+        const elementRect = threadRef.current.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const elementTop = elementRect.top - containerRect.top + container.scrollTop;
+        const targetScroll = elementTop - 20; // 上に少し余白
+        container.scrollTo({
+          top: Math.max(0, targetScroll),
+          behavior: 'smooth'
+        });
+      }
     }
   }, [isSelected]);
 

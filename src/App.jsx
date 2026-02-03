@@ -42,20 +42,22 @@ function TopBar() {
   return (
     <div className="top-bar">
       <div className="top-bar-left">
-        <button
-          className={`top-bar-btn icon-only ${isSidebarOpen ? 'active' : ''}`}
-          onClick={toggleSidebar}
-          title={isSidebarOpen ? 'サイドバーを閉じる' : 'サイドバーを開く'}
-        >
-          <SidebarIcon />
-        </button>
-        <button
-          className={`top-bar-btn icon-only ${isEditorOpen ? 'active' : ''}`}
-          onClick={toggleEditor}
-          title={isEditorOpen ? 'エディタを非表示' : 'エディタを表示'}
-        >
-          <CodeIcon />
-        </button>
+        <div className="btn-group">
+          <button
+            className={`top-bar-btn icon-only ${isSidebarOpen ? 'active' : ''}`}
+            onClick={toggleSidebar}
+            title={isSidebarOpen ? 'サイドバーを閉じる (⌘B)' : 'サイドバーを開く (⌘B)'}
+          >
+            <SidebarIcon />
+          </button>
+          <button
+            className={`top-bar-btn icon-only ${isEditorOpen ? 'active' : ''}`}
+            onClick={toggleEditor}
+            title={isEditorOpen ? 'エディタを非表示 (⌘E)' : 'エディタを表示 (⌘E)'}
+          >
+            <CodeIcon />
+          </button>
+        </div>
       </div>
       <div className="top-bar-center">
         <AppLogo />
@@ -65,19 +67,23 @@ function TopBar() {
         )}
       </div>
       <div className="top-bar-right">
-        <button
-          className={`top-bar-btn icon-only ${isAnnotationPanelOpen ? 'active' : ''}`}
-          onClick={toggleAnnotationPanel}
-          title={isAnnotationPanelOpen ? '注釈パネルを閉じる' : '注釈パネルを開く'}
-        >
-          <AnnotationPanelIcon />
-        </button>
-        <button className="top-bar-btn" onClick={toggleTheme} title={isDark ? 'ライトモード' : 'ダークモード'}>
-          {isDark ? <SunIcon /> : <MoonIcon />}
-        </button>
-        <button className="top-bar-btn" onClick={openSettings} title="設定 (⌘,)">
-          <SettingsIcon />
-        </button>
+        <div className="btn-group">
+          <button
+            className={`top-bar-btn icon-only ${isAnnotationPanelOpen ? 'active' : ''}`}
+            onClick={toggleAnnotationPanel}
+            title={isAnnotationPanelOpen ? '注釈パネルを閉じる' : '注釈パネルを開く'}
+          >
+            <AnnotationPanelIcon />
+          </button>
+        </div>
+        <div className="btn-group">
+          <button className="top-bar-btn icon-only" onClick={toggleTheme} title={isDark ? 'ライトモード' : 'ダークモード'}>
+            {isDark ? <SunIcon /> : <MoonIcon />}
+          </button>
+          <button className="top-bar-btn icon-only" onClick={openSettings} title="設定 (⌘,)">
+            <SettingsIcon />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -431,13 +437,13 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             top: 0;
             left: 0;
             right: 0;
-            height: 40px;
+            height: 38px;
             background-color: var(--bg-tertiary);
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 16px 0 80px; /* 左側にmacOSウィンドウコントロール用のスペース */
+            padding: 0 12px 0 76px;
             z-index: 100;
             -webkit-app-region: drag;
           }
@@ -453,15 +459,16 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
+            gap: 6px;
             -webkit-app-region: no-drag;
           }
 
           .app-title {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--text-primary);
-            letter-spacing: -0.5px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: -0.3px;
+            user-select: none;
           }
 
           .top-bar-right {
@@ -471,17 +478,26 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             -webkit-app-region: no-drag;
           }
 
+          .btn-group {
+            display: flex;
+            align-items: center;
+            background-color: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 2px;
+            gap: 1px;
+          }
+
           .top-bar-btn {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 6px;
+            justify-content: center;
+            padding: 5px 7px;
+            border-radius: 4px;
             background-color: transparent;
             border: none;
             cursor: pointer;
-            transition: all 0.15s;
-            color: var(--text-secondary);
+            transition: all 0.15s ease;
+            color: var(--text-muted);
           }
 
           .top-bar-btn:hover {
@@ -494,47 +510,49 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           }
 
           .top-bar-btn svg {
-            width: 16px;
-            height: 16px;
+            width: 15px;
+            height: 15px;
           }
 
           .top-bar-btn.icon-only {
-            padding: 6px;
+            padding: 5px 7px;
           }
 
           .top-bar-btn.active {
-            background-color: var(--bg-hover);
-            color: var(--accent-color);
+            background-color: var(--accent-color);
+            color: white;
           }
 
-          .btn-label {
-            font-size: 12px;
-            font-weight: 500;
+          .top-bar-btn.active:hover {
+            background-color: var(--accent-hover);
+            color: white;
           }
 
           .env-badge {
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 9px;
-            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 8px;
+            font-weight: 600;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
           }
 
           .env-badge.dev {
-            background-color: rgba(255, 193, 7, 0.2);
+            background-color: rgba(255, 193, 7, 0.15);
             color: #ffc107;
-            border: 1px solid #ffc107;
           }
 
           .env-badge.prod {
-            background-color: rgba(76, 175, 80, 0.2);
+            background-color: rgba(76, 175, 80, 0.15);
             color: #4caf50;
-            border: 1px solid #4caf50;
           }
 
           .app {
-            margin-top: 40px;
-            height: calc(100vh - 40px) !important;
+            position: absolute;
+            top: 38px;
+            left: 0;
+            right: 0;
+            bottom: 0;
           }
 
           .sidebar {

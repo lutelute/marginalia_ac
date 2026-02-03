@@ -677,10 +677,21 @@ function MarkdownPreviewInner() {
       }
     }
 
-    if (element) {
-      // スクロールを実行
+    if (element && contentRef.current) {
+      // contentRef内でのみスクロール（親要素のスクロールを防ぐ）
       setTimeout(() => {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const container = contentRef.current;
+        const elementRect = element.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+
+        // 要素をコンテナの中央に配置するスクロール位置を計算
+        const elementTop = elementRect.top - containerRect.top + container.scrollTop;
+        const targetScroll = elementTop - (containerRect.height / 2) + (elementRect.height / 2);
+
+        container.scrollTo({
+          top: Math.max(0, targetScroll),
+          behavior: 'smooth'
+        });
 
         // ハイライトエフェクト（より目立つ）
         element.classList.add('highlight-flash');

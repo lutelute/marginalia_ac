@@ -11,7 +11,7 @@ import SplitPane from './components/common/SplitPane';
 
 function TopBar() {
   const { settings, updateSettings, openSettings, isDevelopment } = useSettings();
-  const { isSidebarOpen, isEditorOpen, isAnnotationPanelOpen, toggleSidebar, toggleEditor, toggleAnnotationPanel } = useAppState();
+  const { isSidebarOpen, editorMode, isAnnotationPanelOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel } = useAppState();
   const isDark = settings.ui.theme === 'dark';
 
   useEffect(() => {
@@ -22,7 +22,7 @@ function TopBar() {
     }
   }, [isDark]);
 
-  // キーボードショートカット: Cmd/Ctrl + , で設定を開く
+  // キーボードショートカット
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
@@ -46,16 +46,35 @@ function TopBar() {
           <button
             className={`top-bar-btn icon-only ${isSidebarOpen ? 'active' : ''}`}
             onClick={toggleSidebar}
-            title={isSidebarOpen ? 'サイドバーを閉じる (⌘B)' : 'サイドバーを開く (⌘B)'}
+            title={isSidebarOpen ? 'サイドバーを閉じる' : 'サイドバーを開く'}
           >
             <SidebarIcon />
           </button>
+        </div>
+        <div className="mode-toggle-group">
           <button
-            className={`top-bar-btn icon-only ${isEditorOpen ? 'active' : ''}`}
-            onClick={toggleEditor}
-            title={isEditorOpen ? 'エディタを非表示 (⌘E)' : 'エディタを表示 (⌘E)'}
+            className={`mode-toggle-btn ${editorMode === 'edit' ? 'active' : ''}`}
+            onClick={() => setEditorMode('edit')}
+            title="編集モード"
           >
-            <CodeIcon />
+            <EditIcon />
+            <span>Edit</span>
+          </button>
+          <button
+            className={`mode-toggle-btn ${editorMode === 'split' ? 'active' : ''}`}
+            onClick={() => setEditorMode('split')}
+            title="分割モード"
+          >
+            <SplitIcon />
+            <span>Split</span>
+          </button>
+          <button
+            className={`mode-toggle-btn ${editorMode === 'preview' ? 'active' : ''}`}
+            onClick={() => setEditorMode('preview')}
+            title="プレビューモード"
+          >
+            <PreviewIcon />
+            <span>Preview</span>
           </button>
         </div>
       </div>
@@ -196,6 +215,33 @@ function CodeIcon() {
   );
 }
 
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
+
+function SplitIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="12" y1="3" x2="12" y2="21" />
+    </svg>
+  );
+}
+
+function PreviewIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
 function AnnotationPanelIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -266,9 +312,10 @@ function AppStateProvider({ children }) {
     const saved = localStorage.getItem('isSidebarOpen');
     return saved !== 'false';
   });
-  const [isEditorOpen, setIsEditorOpen] = useState(() => {
-    const saved = localStorage.getItem('isEditorOpen');
-    return saved !== 'false';
+  // editorMode: 'edit' | 'split' | 'preview'
+  const [editorMode, setEditorModeState] = useState(() => {
+    const saved = localStorage.getItem('editorMode');
+    return saved || 'split';
   });
   const [isAnnotationPanelOpen, setIsAnnotationPanelOpen] = useState(() => {
     const saved = localStorage.getItem('isAnnotationPanelOpen');
@@ -283,12 +330,9 @@ function AppStateProvider({ children }) {
     });
   }, []);
 
-  const toggleEditor = useCallback(() => {
-    setIsEditorOpen((prev) => {
-      const newValue = !prev;
-      localStorage.setItem('isEditorOpen', newValue.toString());
-      return newValue;
-    });
+  const setEditorMode = useCallback((mode) => {
+    setEditorModeState(mode);
+    localStorage.setItem('editorMode', mode);
   }, []);
 
   const toggleAnnotationPanel = useCallback(() => {
@@ -300,7 +344,7 @@ function AppStateProvider({ children }) {
   }, []);
 
   return (
-    <AppStateContext.Provider value={{ isSidebarOpen, isEditorOpen, isAnnotationPanelOpen, toggleSidebar, toggleEditor, toggleAnnotationPanel }}>
+    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel }}>
       {children}
     </AppStateContext.Provider>
   );
@@ -357,7 +401,10 @@ function App() {
 }
 
 function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
-  const { isSidebarOpen, isEditorOpen, isAnnotationPanelOpen } = useAppState();
+  const { isSidebarOpen, editorMode, isAnnotationPanelOpen } = useAppState();
+
+  const showEditor = editorMode === 'edit' || editorMode === 'split';
+  const showPreview = editorMode === 'preview' || editorMode === 'split';
 
   return (
     <>
@@ -370,13 +417,15 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
         </div>
         {isSidebarOpen && <ResizeHandle onResize={handleSidebarResize} position="left" />}
 
-        <div className={`main-content ${isEditorOpen ? 'with-editor' : 'preview-only'}`}>
-          {isEditorOpen ? (
+        <div className={`main-content editor-mode-${editorMode}`}>
+          {editorMode === 'split' ? (
             <SplitPane
               left={<MarkdownEditor />}
               right={<MarkdownPreview />}
               initialLeftWidth={50}
             />
+          ) : editorMode === 'edit' ? (
+            <MarkdownEditor />
           ) : (
             <MarkdownPreview />
           )}
@@ -485,6 +534,49 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             border-radius: 6px;
             padding: 2px;
             gap: 1px;
+          }
+
+          .mode-toggle-group {
+            display: flex;
+            align-items: center;
+            background-color: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 2px;
+            margin-left: 8px;
+          }
+
+          .mode-toggle-btn {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background-color: transparent;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 500;
+          }
+
+          .mode-toggle-btn:hover {
+            background-color: var(--bg-hover);
+            color: var(--text-primary);
+          }
+
+          .mode-toggle-btn.active {
+            background-color: var(--accent-color);
+            color: white;
+          }
+
+          .mode-toggle-btn.active:hover {
+            background-color: var(--accent-hover);
+            color: white;
+          }
+
+          .mode-toggle-btn svg {
+            flex-shrink: 0;
           }
 
           .top-bar-btn {

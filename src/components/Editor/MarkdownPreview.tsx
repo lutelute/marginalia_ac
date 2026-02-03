@@ -1187,9 +1187,12 @@ function MarkdownPreviewInner() {
 
         .preview-main {
           flex: 1;
-          padding: 24px;
-          line-height: 1.6;
+          padding: 32px 40px;
+          font-size: 15px;
+          line-height: 1.8;
+          color: var(--text-primary);
           min-height: 0;
+          max-width: 900px;
         }
 
         .preview-main::selection,

@@ -11,9 +11,9 @@
   --bg-tertiary: #2d2d2d;
   --bg-hover: #3c3c3c;
   --bg-active: #094771;
-  --text-primary: #cccccc;
-  --text-secondary: #999999;
-  --text-muted: #6b6b6b;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0a0;
+  --text-muted: #707070;
   --border-color: #404040;
   --accent-color: #0078d4;
   --accent-hover: #1e8ad4;
@@ -47,10 +47,12 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+  font-family: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont,
+    'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo',
     sans-serif;
   font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   color: var(--text-primary);
   background-color: var(--bg-primary);
   overflow: hidden;

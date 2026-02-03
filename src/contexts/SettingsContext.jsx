@@ -2,10 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 
 const SettingsContext = createContext(null);
 
-const DEFAULT_SETTINGS = {
-  // 環境設定
-  environment: 'development', // 'development' | 'production'
+// 環境判定（ビルド時に決定）
+const IS_DEVELOPMENT = import.meta.env.DEV;
+const APP_VERSION = '1.0.1';
+const GITHUB_REPO = 'lutelute/marginalia';
 
+const DEFAULT_SETTINGS = {
   // エディタ設定
   editor: {
     fontSize: 14,
@@ -92,19 +94,35 @@ export function SettingsProvider({ children }) {
     localStorage.removeItem('marginalia-settings');
   }, []);
 
-  // 環境切り替え
-  const setEnvironment = useCallback((env) => {
-    updateSettings('environment', env);
+  // アップデート確認
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
-    // 環境に応じた設定を自動適用
-    if (env === 'development') {
-      updateSettings('developer.enableDevTools', true);
-      updateSettings('developer.verboseLogging', true);
-    } else {
-      updateSettings('developer.enableDevTools', false);
-      updateSettings('developer.verboseLogging', false);
+  const checkForUpdates = useCallback(async () => {
+    setIsCheckingUpdate(true);
+    try {
+      const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
+      if (response.ok) {
+        const data = await response.json();
+        const latestVersion = data.tag_name.replace('v', '');
+        const hasUpdate = latestVersion !== APP_VERSION;
+        setUpdateInfo({
+          hasUpdate,
+          currentVersion: APP_VERSION,
+          latestVersion,
+          releaseUrl: data.html_url,
+          releaseName: data.name,
+          publishedAt: data.published_at,
+        });
+        return { hasUpdate, latestVersion };
+      }
+    } catch (error) {
+      console.error('Failed to check for updates:', error);
+    } finally {
+      setIsCheckingUpdate(false);
     }
-  }, [updateSettings]);
+    return null;
+  }, []);
 
   // 設定モーダルの開閉
   const openSettings = useCallback(() => setIsSettingsOpen(true), []);
@@ -137,14 +155,17 @@ export function SettingsProvider({ children }) {
     settings,
     updateSettings,
     resetSettings,
-    setEnvironment,
     isSettingsOpen,
     openSettings,
     closeSettings,
     exportSettings,
     importSettings,
-    isDevelopment: settings.environment === 'development',
-    isProduction: settings.environment === 'production',
+    checkForUpdates,
+    updateInfo,
+    isCheckingUpdate,
+    isDevelopment: IS_DEVELOPMENT,
+    appVersion: APP_VERSION,
+    githubRepo: GITHUB_REPO,
   };
 
   return (

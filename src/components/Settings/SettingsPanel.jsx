@@ -6,7 +6,7 @@ const TABS = [
   { id: 'editor', label: 'エディタ' },
   { id: 'preview', label: 'プレビュー' },
   { id: 'backup', label: 'バックアップ' },
-  { id: 'developer', label: '開発者' },
+  { id: 'about', label: 'このアプリ' },
 ];
 
 function SettingsPanel() {
@@ -14,11 +14,15 @@ function SettingsPanel() {
     settings,
     updateSettings,
     resetSettings,
-    setEnvironment,
     closeSettings,
     exportSettings,
     importSettings,
+    checkForUpdates,
+    updateInfo,
+    isCheckingUpdate,
     isDevelopment,
+    appVersion,
+    githubRepo,
   } = useSettings();
 
   const [activeTab, setActiveTab] = useState('general');
@@ -63,30 +67,6 @@ function SettingsPanel() {
           <div className="settings-content">
             {activeTab === 'general' && (
               <div className="settings-section">
-                <h3>環境設定</h3>
-                <div className="setting-item">
-                  <label>環境モード</label>
-                  <div className="environment-selector">
-                    <button
-                      className={`env-btn ${isDevelopment ? 'active dev' : ''}`}
-                      onClick={() => setEnvironment('development')}
-                    >
-                      🛠️ 開発
-                    </button>
-                    <button
-                      className={`env-btn ${!isDevelopment ? 'active prod' : ''}`}
-                      onClick={() => setEnvironment('production')}
-                    >
-                      🚀 本番
-                    </button>
-                  </div>
-                  <p className="setting-hint">
-                    {isDevelopment
-                      ? '開発モード: デバッグツールと詳細ログが有効'
-                      : '本番モード: パフォーマンス最適化'}
-                  </p>
-                </div>
-
                 <h3>テーマ</h3>
                 <div className="setting-item">
                   <label>カラーテーマ</label>
@@ -272,60 +252,83 @@ function SettingsPanel() {
               </div>
             )}
 
-            {activeTab === 'developer' && (
+            {activeTab === 'about' && (
               <div className="settings-section">
-                <h3>開発者設定</h3>
-                <p className="section-warning">
-                  これらの設定は開発者向けです。不明な場合は変更しないでください。
-                </p>
-                <div className="setting-item checkbox">
-                  <input
-                    type="checkbox"
-                    id="enableDevTools"
-                    checked={settings.developer.enableDevTools}
-                    onChange={(e) => updateSettings('developer.enableDevTools', e.target.checked)}
-                  />
-                  <label htmlFor="enableDevTools">DevToolsを有効化</label>
-                </div>
-                <div className="setting-item checkbox">
-                  <input
-                    type="checkbox"
-                    id="verboseLogging"
-                    checked={settings.developer.verboseLogging}
-                    onChange={(e) => updateSettings('developer.verboseLogging', e.target.checked)}
-                  />
-                  <label htmlFor="verboseLogging">詳細ログを有効化</label>
-                </div>
-                <div className="setting-item checkbox">
-                  <input
-                    type="checkbox"
-                    id="showDebugInfo"
-                    checked={settings.developer.showDebugInfo}
-                    onChange={(e) => updateSettings('developer.showDebugInfo', e.target.checked)}
-                  />
-                  <label htmlFor="showDebugInfo">デバッグ情報を表示</label>
+                <h3>アップデート</h3>
+                <div className="update-section">
+                  <div className="current-version">
+                    <span>現在のバージョン</span>
+                    <span className="version-number">v{appVersion}</span>
+                  </div>
+                  <button
+                    className="action-btn update-btn"
+                    onClick={checkForUpdates}
+                    disabled={isCheckingUpdate}
+                  >
+                    {isCheckingUpdate ? '確認中...' : '🔄 アップデートを確認'}
+                  </button>
+                  {updateInfo && (
+                    <div className={`update-result ${updateInfo.hasUpdate ? 'has-update' : 'up-to-date'}`}>
+                      {updateInfo.hasUpdate ? (
+                        <>
+                          <p className="update-message">新しいバージョンがあります！</p>
+                          <p className="update-version">v{updateInfo.latestVersion}</p>
+                          <a
+                            href={updateInfo.releaseUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="download-link"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              window.open(updateInfo.releaseUrl, '_blank');
+                            }}
+                          >
+                            ダウンロードページを開く →
+                          </a>
+                        </>
+                      ) : (
+                        <p className="update-message">最新バージョンです</p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <h3>ビルド情報</h3>
+                <h3>アプリ情報</h3>
                 <div className="build-info">
                   <div className="info-row">
                     <span>バージョン:</span>
-                    <span>1.0.0</span>
-                  </div>
-                  <div className="info-row">
-                    <span>環境:</span>
-                    <span className={isDevelopment ? 'env-dev' : 'env-prod'}>
-                      {isDevelopment ? '開発' : '本番'}
-                    </span>
+                    <span>v{appVersion}</span>
                   </div>
                   <div className="info-row">
                     <span>Electron:</span>
-                    <span>28.1.0</span>
+                    <span>28.3.3</span>
                   </div>
                   <div className="info-row">
                     <span>React:</span>
                     <span>18.2.0</span>
                   </div>
+                </div>
+
+                <h3>リンク</h3>
+                <div className="link-buttons">
+                  <button
+                    className="action-btn"
+                    onClick={() => window.open(`https://github.com/${githubRepo}`, '_blank')}
+                  >
+                    GitHub リポジトリ
+                  </button>
+                  <button
+                    className="action-btn"
+                    onClick={() => window.open(`https://github.com/${githubRepo}/releases`, '_blank')}
+                  >
+                    リリース一覧
+                  </button>
+                  <button
+                    className="action-btn"
+                    onClick={() => window.open(`https://github.com/${githubRepo}/issues`, '_blank')}
+                  >
+                    バグ報告・要望
+                  </button>
                 </div>
               </div>
             )}
@@ -490,39 +493,6 @@ function SettingsPanel() {
             margin-top: 8px;
           }
 
-          .environment-selector {
-            display: flex;
-            gap: 8px;
-          }
-
-          .env-btn {
-            flex: 1;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            background-color: var(--bg-tertiary);
-            color: var(--text-secondary);
-            border: 2px solid transparent;
-            transition: all 0.2s;
-          }
-
-          .env-btn:hover {
-            background-color: var(--bg-hover);
-          }
-
-          .env-btn.active.dev {
-            background-color: rgba(255, 193, 7, 0.2);
-            border-color: #ffc107;
-            color: #ffc107;
-          }
-
-          .env-btn.active.prod {
-            background-color: rgba(76, 175, 80, 0.2);
-            border-color: #4caf50;
-            color: #4caf50;
-          }
-
           .buttons-row {
             display: flex;
             gap: 8px;
@@ -580,14 +550,84 @@ function SettingsPanel() {
             border-bottom: 1px solid var(--border-color);
           }
 
-          .env-dev {
-            color: #ffc107;
-            font-weight: 600;
+          .update-section {
+            background-color: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
           }
 
-          .env-prod {
-            color: #4caf50;
+          .current-version {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 13px;
+          }
+
+          .version-number {
             font-weight: 600;
+            color: var(--accent-color);
+          }
+
+          .update-btn {
+            width: 100%;
+            margin-bottom: 12px;
+          }
+
+          .update-result {
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+          }
+
+          .update-result.has-update {
+            background-color: rgba(0, 120, 212, 0.15);
+            border: 1px solid var(--accent-color);
+          }
+
+          .update-result.up-to-date {
+            background-color: rgba(76, 175, 80, 0.15);
+            border: 1px solid #4caf50;
+          }
+
+          .update-message {
+            font-size: 13px;
+            color: var(--text-primary);
+            margin: 0 0 4px 0;
+          }
+
+          .update-version {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--accent-color);
+            margin: 8px 0;
+          }
+
+          .download-link {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: var(--accent-color);
+            color: white;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 13px;
+            margin-top: 8px;
+            cursor: pointer;
+          }
+
+          .download-link:hover {
+            background-color: var(--accent-hover);
+          }
+
+          .link-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          .link-buttons .action-btn {
+            text-align: center;
           }
         `}</style>
       </div>

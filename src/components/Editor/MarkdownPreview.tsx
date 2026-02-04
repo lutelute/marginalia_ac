@@ -7,7 +7,11 @@ import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+import { useSettings } from '../../contexts/SettingsContext';
 import LinkPreviewPopup from './LinkPreviewPopup';
+import { triggerEditorScroll, setEditorScrollCallback } from './MarkdownEditor';
+import { scrollPreviewToLine } from '../../utils/scrollSync';
+import AnnotationHoverCard from '../Annotations/AnnotationHoverCard';
 
 const ANNOTATION_TYPES = [
   { id: 'comment', label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
@@ -489,54 +493,50 @@ function TableBlock({ children, annotations, onAnnotationClick }) {
   );
 }
 
-// グローバルで既にマッチした注釈IDを追跡（レンダリングごとにリセット）
-const matchedAnnotationIds = new Set();
-// 各テキストの出現回数を追跡（レンダリングごとにリセット）
-const textOccurrenceCount = new Map<string, number>();
-
 // 注釈マーカー付きテキストコンポーネント
-function AnnotatedText({ children, annotations, onAnnotationClick }) {
+// sourceLine: この要素のMarkdownソース行番号（data-source-lineから取得）
+// trackingRefs は親コンポーネントから渡されるレンダリングごとの追跡用オブジェクト
+function AnnotatedText({ children, annotations, onAnnotationClick, onAnnotationHover, onAnnotationLeave, trackingRefs, sourceLine }) {
   if (!children || typeof children !== 'string') {
     return children;
   }
 
   const text = children;
   const matches = [];
+  const { matchedIds } = trackingRefs || { matchedIds: new Set() };
 
   // ブロック要素でない注釈のみ対象（blockIdがnull）
-  // かつ、まだマッチしていない注釈のみ
+  // 行番号ベースでマッチング（より正確）
   annotations.forEach((annotation) => {
     if (
       annotation.selectedText &&
       !annotation.resolved &&
       !annotation.blockId &&
-      !matchedAnnotationIds.has(annotation.id)
+      !matchedIds.has(annotation.id)
     ) {
       const searchText = annotation.selectedText;
-      let searchStart = 0;
-      let foundIndex = -1;
-      let currentOccurrence = 0;
-      const targetOccurrence = annotation.occurrenceIndex ?? 0;
+
+      // 行番号ベースでマッチング
+      // annotation.startLineが存在する場合のみ行番号でフィルタリング
+      if (sourceLine !== undefined && annotation.startLine !== undefined && annotation.startLine > 0) {
+        const annotationStartLine = annotation.startLine;
+        const annotationEndLine = annotation.endLine || annotationStartLine;
+        // 注釈の行範囲とsourceLineを比較（余裕を持たせる）
+        const lineMatch = sourceLine >= annotationStartLine - 2 && sourceLine <= annotationEndLine + 2;
+        if (!lineMatch) {
+          return; // この注釈は別の行のもの
+        }
+      }
 
       // このテキストノード内で該当テキストを検索
-      while ((foundIndex = text.indexOf(searchText, searchStart)) !== -1) {
-        // グローバルな出現回数を取得・更新
-        const globalCount = textOccurrenceCount.get(searchText) || 0;
-        textOccurrenceCount.set(searchText, globalCount + 1);
-
-        // 目的の出現番号と一致するかチェック
-        if (globalCount === targetOccurrence) {
-          matches.push({
-            start: foundIndex,
-            end: foundIndex + searchText.length,
-            annotation,
-          });
-          matchedAnnotationIds.add(annotation.id);
-          break;
-        }
-
-        searchStart = foundIndex + 1;
-        currentOccurrence++;
+      const foundIndex = text.indexOf(searchText);
+      if (foundIndex !== -1) {
+        matches.push({
+          start: foundIndex,
+          end: foundIndex + searchText.length,
+          annotation,
+        });
+        matchedIds.add(annotation.id);
       }
     }
   });
@@ -560,7 +560,7 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
   const parts = [];
   let lastIndex = 0;
 
-  filteredMatches.forEach((match, i) => {
+  filteredMatches.forEach((match) => {
     if (match.start > lastIndex) {
       parts.push(text.slice(lastIndex, match.start));
     }
@@ -577,7 +577,8 @@ function AnnotatedText({ children, annotations, onAnnotationClick }) {
           e.stopPropagation();
           onAnnotationClick(match.annotation.id);
         }}
-        title={`${typeInfo?.label}: ${match.annotation.content.slice(0, 50)}...`}
+        onMouseEnter={(e) => onAnnotationHover?.(e, match.annotation.id)}
+        onMouseLeave={() => onAnnotationLeave?.()}
       >
         {text.slice(match.start, match.end)}
         <span className="annotation-marker">{typeInfo?.icon}</span>
@@ -624,13 +625,25 @@ class ErrorBoundary extends React.Component {
 
 function MarkdownPreviewInner() {
   const { content, currentFile, openFile, rootPath } = useFile();
-  const { annotations, addAnnotation, selectAnnotation, selectedAnnotation } = useAnnotation();
+  const {
+    annotations,
+    addAnnotation,
+    selectAnnotation,
+    selectedAnnotation,
+    updateAnnotation,
+    resolveAnnotation,
+    deleteAnnotation,
+    addReply,
+    scrollToEditorLine,
+  } = useAnnotation();
+  const { settings } = useSettings();
   const [selection, setSelection] = useState(null);
   const [popupPosition, setPopupPosition] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formType, setFormType] = useState(null);
-  const contentRef = useRef(null);
-  const mainRef = useRef(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+
 
   // リンクホバープレビュー用の状態
   const [hoveredLink, setHoveredLink] = useState<{
@@ -639,10 +652,59 @@ function MarkdownPreviewInner() {
   } | null>(null);
   const linkHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 注釈ホバーカード用の状態
+  const [hoveredAnnotation, setHoveredAnnotation] = useState<{
+    annotation: any;
+    position: { x: number; y: number };
+  } | null>(null);
+  const annotationHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const annotationCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isHoveringAnnotationCardRef = useRef(false);
+
   // レンダリングのたびにマッチ追跡をリセット
-  matchedAnnotationIds.clear();
-  textOccurrenceCount.clear();
+  // useRefで追跡オブジェクトを保持し、レンダリングごとにクリア
+  const trackingRefsRef = useRef({
+    matchedIds: new Set<string>(),
+    occurrenceCount: new Map<string, number>(),
+  });
+
+  // 毎回レンダリング時にクリア（ReactMarkdownの再レンダリング前に）
+  trackingRefsRef.current.matchedIds.clear();
+  trackingRefsRef.current.occurrenceCount.clear();
+  const trackingRefs = trackingRefsRef.current;
+
   tableCounter = 0;
+
+  // エディタからのスクロールでプレビューを同期
+  const handleEditorScroll = useCallback((line: number) => {
+    if (!contentRef.current) return;
+    scrollPreviewToLine(contentRef.current, line, true);
+  }, []);
+
+  // エディタスクロールコールバックを設定
+  useEffect(() => {
+    // 常にコールバックを設定（scrollSyncのON/OFFはMarkdownEditor側で判断）
+    setEditorScrollCallback(handleEditorScroll);
+    return () => setEditorScrollCallback(null);
+  }, [handleEditorScroll]);
+
+  // プレビュークリックでエディタにジャンプ
+  const handlePreviewClick = useCallback((e: React.MouseEvent) => {
+    // 注釈やリンクのクリックは除外
+    const target = e.target as HTMLElement;
+    if (target.closest('.annotated-text') || target.closest('a') || target.closest('.selection-popup')) {
+      return;
+    }
+
+    // data-source-line 属性を持つ最も近い要素を探す
+    const lineElement = target.closest('[data-source-line]');
+    if (lineElement) {
+      const line = parseInt(lineElement.getAttribute('data-source-line') || '1', 10);
+      if (line > 0) {
+        triggerEditorScroll(line);
+      }
+    }
+  }, []);
 
   // 未解決の注釈を取得
   const unresolvedAnnotations = useMemo(
@@ -933,6 +995,75 @@ function MarkdownPreviewInner() {
     selectAnnotation(annotationId);
   }, [selectAnnotation]);
 
+  // 注釈ホバー処理
+  const handleAnnotationMouseEnter = useCallback((e: React.MouseEvent, annotationId: string) => {
+    const annotation = annotations.find(a => a.id === annotationId);
+    if (!annotation) return;
+
+    // 閉じるタイマーをキャンセル
+    if (annotationCloseTimeoutRef.current) {
+      clearTimeout(annotationCloseTimeoutRef.current);
+      annotationCloseTimeoutRef.current = null;
+    }
+
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    const containerRect = contentRef.current?.getBoundingClientRect();
+
+    if (containerRect) {
+      if (annotationHoverTimeoutRef.current) {
+        clearTimeout(annotationHoverTimeoutRef.current);
+      }
+
+      annotationHoverTimeoutRef.current = setTimeout(() => {
+        setHoveredAnnotation({
+          annotation,
+          position: {
+            x: rect.left - containerRect.left + rect.width / 2,
+            y: rect.bottom - containerRect.top + contentRef.current.scrollTop + 8,
+          },
+        });
+      }, 200);
+    }
+  }, [annotations]);
+
+  const handleAnnotationMouseLeave = useCallback(() => {
+    if (annotationHoverTimeoutRef.current) {
+      clearTimeout(annotationHoverTimeoutRef.current);
+      annotationHoverTimeoutRef.current = null;
+    }
+    // 遅延して閉じる（カードに移動する時間を確保）
+    if (!annotationCloseTimeoutRef.current && hoveredAnnotation) {
+      annotationCloseTimeoutRef.current = setTimeout(() => {
+        if (!isHoveringAnnotationCardRef.current) {
+          setHoveredAnnotation(null);
+        }
+        annotationCloseTimeoutRef.current = null;
+      }, 300);
+    }
+  }, [hoveredAnnotation]);
+
+  const closeAnnotationHoverCard = useCallback(() => {
+    isHoveringAnnotationCardRef.current = false;
+    setHoveredAnnotation(null);
+  }, []);
+
+  // カード上のホバー状態を追跡
+  const handleAnnotationCardMouseEnter = useCallback(() => {
+    isHoveringAnnotationCardRef.current = true;
+    if (annotationCloseTimeoutRef.current) {
+      clearTimeout(annotationCloseTimeoutRef.current);
+      annotationCloseTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleAnnotationCardMouseLeave = useCallback(() => {
+    isHoveringAnnotationCardRef.current = false;
+    annotationCloseTimeoutRef.current = setTimeout(() => {
+      setHoveredAnnotation(null);
+      annotationCloseTimeoutRef.current = null;
+    }, 200);
+  }, []);
+
   // リンクホバー処理
   const handleLinkMouseEnter = useCallback((e: React.MouseEvent, href: string) => {
     // 外部リンクや#リンクはスキップ（外部リンクも簡易表示）
@@ -971,6 +1102,7 @@ function MarkdownPreviewInner() {
   }, []);
 
   // 注釈マーカー付きテキストを生成するカスタムコンポーネント
+  // nodeにはposition情報が含まれる（react-markdownが提供）
   const createAnnotatedComponents = useCallback(() => ({
     a: ({ href, children }) => (
       <a
@@ -987,7 +1119,8 @@ function MarkdownPreviewInner() {
       </a>
     ),
     pre: (preProps) => {
-      const { children } = preProps;
+      const { children, node } = preProps;
+      const sourceLine = node?.position?.start?.line;
       // codeの子要素を取得
       let codeContent = null;
       let className = '';
@@ -1006,18 +1139,20 @@ function MarkdownPreviewInner() {
           : 'language-text';
 
         return (
-          <CollapsibleCode
-            className={langClass}
-            annotations={annotations}
-            onAnnotationClick={handleAnnotationClick}
-          >
-            {codeContent}
-          </CollapsibleCode>
+          <div data-source-line={sourceLine}>
+            <CollapsibleCode
+              className={langClass}
+              annotations={annotations}
+              onAnnotationClick={handleAnnotationClick}
+            >
+              {codeContent}
+            </CollapsibleCode>
+          </div>
         );
       }
 
       // フォールバック
-      return <pre>{children}</pre>;
+      return <pre data-source-line={sourceLine}>{children}</pre>;
     },
     code: ({ className, children, ...props }) => {
       // language-* クラスがある場合はコードブロック（preで処理される）
@@ -1033,100 +1168,152 @@ function MarkdownPreviewInner() {
       return <code className={className} {...props}>{children}</code>;
     },
     // テーブル
-    table: ({ children }) => (
-      <TableBlock
-        annotations={annotations}
-        onAnnotationClick={handleAnnotationClick}
-      >
-        {children}
-      </TableBlock>
-    ),
-    p: ({ children }) => (
-      <p>
-        {React.Children.map(children, (child) => {
-          if (typeof child === 'string') {
-            return (
-              <AnnotatedText
-                annotations={unresolvedAnnotations}
-                onAnnotationClick={handleAnnotationClick}
-              >
-                {child}
-              </AnnotatedText>
-            );
-          }
-          return child;
-        })}
-      </p>
-    ),
-    li: ({ children }) => (
-      <li>
-        {React.Children.map(children, (child) => {
-          if (typeof child === 'string') {
-            return (
-              <AnnotatedText
-                annotations={unresolvedAnnotations}
-                onAnnotationClick={handleAnnotationClick}
-              >
-                {child}
-              </AnnotatedText>
-            );
-          }
-          return child;
-        })}
-      </li>
-    ),
-    h1: ({ children }) => (
-      <h1>
-        {React.Children.map(children, (child) => {
-          if (typeof child === 'string') {
-            return (
-              <AnnotatedText
-                annotations={unresolvedAnnotations}
-                onAnnotationClick={handleAnnotationClick}
-              >
-                {child}
-              </AnnotatedText>
-            );
-          }
-          return child;
-        })}
-      </h1>
-    ),
-    h2: ({ children }) => (
-      <h2>
-        {React.Children.map(children, (child) => {
-          if (typeof child === 'string') {
-            return (
-              <AnnotatedText
-                annotations={unresolvedAnnotations}
-                onAnnotationClick={handleAnnotationClick}
-              >
-                {child}
-              </AnnotatedText>
-            );
-          }
-          return child;
-        })}
-      </h2>
-    ),
-    h3: ({ children }) => (
-      <h3>
-        {React.Children.map(children, (child) => {
-          if (typeof child === 'string') {
-            return (
-              <AnnotatedText
-                annotations={unresolvedAnnotations}
-                onAnnotationClick={handleAnnotationClick}
-              >
-                {child}
-              </AnnotatedText>
-            );
-          }
-          return child;
-        })}
-      </h3>
-    ),
-  }), [handleLinkClick, unresolvedAnnotations, handleAnnotationClick, annotations, handleLinkMouseEnter, handleLinkMouseLeave, closeLinkPreview]);
+    table: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return (
+        <div data-source-line={sourceLine}>
+          <TableBlock
+            annotations={annotations}
+            onAnnotationClick={handleAnnotationClick}
+          >
+            {children}
+          </TableBlock>
+        </div>
+      );
+    },
+    p: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return (
+        <p data-source-line={sourceLine}>
+          {React.Children.map(children, (child) => {
+            if (typeof child === 'string') {
+              return (
+                <AnnotatedText
+                  annotations={unresolvedAnnotations}
+                  onAnnotationClick={handleAnnotationClick}
+                  onAnnotationHover={handleAnnotationMouseEnter}
+                  onAnnotationLeave={handleAnnotationMouseLeave}
+                  trackingRefs={trackingRefs}
+                  sourceLine={sourceLine}
+                >
+                  {child}
+                </AnnotatedText>
+              );
+            }
+            return child;
+          })}
+        </p>
+      );
+    },
+    li: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return (
+        <li data-source-line={sourceLine}>
+          {React.Children.map(children, (child) => {
+            if (typeof child === 'string') {
+              return (
+                <AnnotatedText
+                  annotations={unresolvedAnnotations}
+                  onAnnotationClick={handleAnnotationClick}
+                  onAnnotationHover={handleAnnotationMouseEnter}
+                  onAnnotationLeave={handleAnnotationMouseLeave}
+                  trackingRefs={trackingRefs}
+                  sourceLine={sourceLine}
+                >
+                  {child}
+                </AnnotatedText>
+              );
+            }
+            return child;
+          })}
+        </li>
+      );
+    },
+    h1: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return (
+        <h1 data-source-line={sourceLine}>
+          {React.Children.map(children, (child) => {
+            if (typeof child === 'string') {
+              return (
+                <AnnotatedText
+                  annotations={unresolvedAnnotations}
+                  onAnnotationClick={handleAnnotationClick}
+                  onAnnotationHover={handleAnnotationMouseEnter}
+                  onAnnotationLeave={handleAnnotationMouseLeave}
+                  trackingRefs={trackingRefs}
+                  sourceLine={sourceLine}
+                >
+                  {child}
+                </AnnotatedText>
+              );
+            }
+            return child;
+          })}
+        </h1>
+      );
+    },
+    h2: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return (
+        <h2 data-source-line={sourceLine}>
+          {React.Children.map(children, (child) => {
+            if (typeof child === 'string') {
+              return (
+                <AnnotatedText
+                  annotations={unresolvedAnnotations}
+                  onAnnotationClick={handleAnnotationClick}
+                  onAnnotationHover={handleAnnotationMouseEnter}
+                  onAnnotationLeave={handleAnnotationMouseLeave}
+                  trackingRefs={trackingRefs}
+                  sourceLine={sourceLine}
+                >
+                  {child}
+                </AnnotatedText>
+              );
+            }
+            return child;
+          })}
+        </h2>
+      );
+    },
+    h3: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return (
+        <h3 data-source-line={sourceLine}>
+          {React.Children.map(children, (child) => {
+            if (typeof child === 'string') {
+              return (
+                <AnnotatedText
+                  annotations={unresolvedAnnotations}
+                  onAnnotationClick={handleAnnotationClick}
+                  onAnnotationHover={handleAnnotationMouseEnter}
+                  onAnnotationLeave={handleAnnotationMouseLeave}
+                  trackingRefs={trackingRefs}
+                  sourceLine={sourceLine}
+                >
+                  {child}
+                </AnnotatedText>
+              );
+            }
+            return child;
+          })}
+        </h3>
+      );
+    },
+    ul: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return <ul data-source-line={sourceLine}>{children}</ul>;
+    },
+    ol: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return <ol data-source-line={sourceLine}>{children}</ol>;
+    },
+    blockquote: ({ children, node }) => {
+      const sourceLine = node?.position?.start?.line;
+      return <blockquote data-source-line={sourceLine}>{children}</blockquote>;
+    },
+  }), [handleLinkClick, unresolvedAnnotations, handleAnnotationClick, handleAnnotationMouseEnter, handleAnnotationMouseLeave, annotations, handleLinkMouseEnter, handleLinkMouseLeave, closeLinkPreview]);
 
   if (!currentFile) {
     return (
@@ -1178,7 +1365,7 @@ function MarkdownPreviewInner() {
           </div>
         )}
 
-        <div className="preview-main" ref={mainRef} onMouseUp={handleMouseUp}>
+        <div className="preview-main" ref={mainRef} onMouseUp={handleMouseUp} onClick={handlePreviewClick}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={[rehypeRaw, rehypeKatex]}
@@ -1205,6 +1392,37 @@ function MarkdownPreviewInner() {
             onClose={closeLinkPreview}
           />
         )}
+
+        {/* 注釈ホバーカード */}
+        {hoveredAnnotation && (
+          <AnnotationHoverCard
+            annotation={hoveredAnnotation.annotation}
+            position={hoveredAnnotation.position}
+            onClose={closeAnnotationHoverCard}
+            onSelect={(id) => {
+              closeAnnotationHoverCard();
+              selectAnnotation(id);
+            }}
+            onUpdate={(id, updates) => updateAnnotation(id, updates)}
+            onResolve={(id, resolved) => {
+              resolveAnnotation(id, resolved);
+            }}
+            onDelete={(id) => {
+              deleteAnnotation(id);
+              closeAnnotationHoverCard();
+            }}
+            onJumpToEditor={(line, annotationId) => {
+              scrollToEditorLine(line, annotationId);
+              closeAnnotationHoverCard();
+            }}
+            onAddReply={(id, content) => {
+              addReply(id, content);
+            }}
+            source="preview"
+            onMouseEnter={handleAnnotationCardMouseEnter}
+            onMouseLeave={handleAnnotationCardMouseLeave}
+          />
+        )}
       </div>
 
       {showForm && selection && (
@@ -1221,8 +1439,10 @@ function MarkdownPreviewInner() {
           display: flex;
           flex-direction: column;
           height: 100%;
+          width: 100%;
           background-color: var(--bg-primary);
           position: relative;
+          min-width: 0;
         }
 
         .preview-header {
@@ -1253,6 +1473,8 @@ function MarkdownPreviewInner() {
           overflow-y: auto;
           display: flex;
           position: relative;
+          min-width: 0;
+          width: 100%;
         }
 
         /* 注釈サイドバー */
@@ -1291,7 +1513,10 @@ function MarkdownPreviewInner() {
           line-height: 1.8;
           color: var(--text-primary);
           min-height: 0;
-          max-width: 900px;
+          min-width: 0;
+          max-width: none;
+          width: 100%;
+          overflow: visible;
         }
 
         .preview-main::selection,
@@ -1299,19 +1524,19 @@ function MarkdownPreviewInner() {
           background-color: rgba(0, 120, 212, 0.3);
         }
 
-        /* 注釈ハイライト */
+        /* 注釈ハイライト（控えめ） */
         .annotated-text {
           position: relative;
-          background-color: color-mix(in srgb, var(--highlight-color) 25%, transparent);
-          border-bottom: 2px solid var(--highlight-color);
+          background-color: color-mix(in srgb, var(--highlight-color) 10%, transparent);
+          border-bottom: 1px dashed var(--highlight-color);
           cursor: pointer;
-          padding: 0 2px;
-          border-radius: 2px;
+          padding: 0 1px;
           transition: background-color 0.2s;
         }
 
         .annotated-text:hover {
-          background-color: color-mix(in srgb, var(--highlight-color) 40%, transparent);
+          background-color: color-mix(in srgb, var(--highlight-color) 25%, transparent);
+          border-bottom-style: solid;
         }
 
         .annotated-text.highlight-flash {
@@ -1320,21 +1545,15 @@ function MarkdownPreviewInner() {
 
         @keyframes highlightFlash {
           0% {
-            background-color: color-mix(in srgb, var(--highlight-color) 70%, transparent);
-            box-shadow: 0 0 10px var(--highlight-color);
+            background-color: color-mix(in srgb, var(--highlight-color) 50%, transparent);
           }
           100% {
-            background-color: color-mix(in srgb, var(--highlight-color) 25%, transparent);
-            box-shadow: none;
+            background-color: color-mix(in srgb, var(--highlight-color) 10%, transparent);
           }
         }
 
         .annotation-marker {
-          position: absolute;
-          top: -8px;
-          right: -4px;
-          font-size: 10px;
-          animation: markerPulse 2s infinite;
+          display: none; /* マーカーアイコンを非表示 */
         }
 
         @keyframes markerPulse {
@@ -1342,43 +1561,35 @@ function MarkdownPreviewInner() {
           50% { opacity: 0.6; }
         }
 
-        /* コード内のハイライト */
+        /* コード内のハイライト（控えめ） */
         .code-annotated-text {
-          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 30%, transparent);
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 12%, transparent);
           border-radius: 2px;
           cursor: pointer;
           position: relative;
           padding: 1px 2px;
           transition: background-color 0.2s;
+          border-bottom: 1px dashed var(--highlight-color, rgba(255, 193, 7, 1));
         }
 
         .code-annotated-text:hover {
-          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 50%, transparent);
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 25%, transparent);
+          border-bottom-style: solid;
         }
 
-        .code-annotated-text::after {
-          content: '';
-          position: absolute;
-          bottom: -1px;
-          left: 0;
-          right: 0;
-          height: 2px;
-          background-color: var(--highlight-color, rgba(255, 193, 7, 1));
-          border-radius: 1px;
-        }
-
-        /* テーブル内のハイライト */
+        /* テーブル内のハイライト（控えめ） */
         .table-annotated-text {
-          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 30%, transparent);
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 12%, transparent);
           border-radius: 2px;
           cursor: pointer;
           padding: 1px 2px;
-          border-bottom: 2px solid var(--highlight-color, rgba(255, 193, 7, 1));
+          border-bottom: 1px dashed var(--highlight-color, rgba(255, 193, 7, 1));
           transition: background-color 0.2s;
         }
 
         .table-annotated-text:hover {
-          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 50%, transparent);
+          background-color: color-mix(in srgb, var(--highlight-color, rgba(255, 193, 7, 1)) 25%, transparent);
+          border-bottom-style: solid;
         }
 
         /* コードブロック折りたたみ */

@@ -118,6 +118,8 @@ export interface EditorSettings {
   lineNumbers: boolean;
   autoSave: boolean;
   autoSaveInterval: number;
+  showMinimap: boolean;
+  scrollSync: boolean;
 }
 
 export interface PreviewSettings {

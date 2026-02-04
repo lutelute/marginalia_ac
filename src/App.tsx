@@ -12,11 +12,41 @@ import SplitPane from './components/common/SplitPane';
 import ToastContainer from './components/common/ToastContainer';
 import ExternalChangeWarning from './components/common/ExternalChangeWarning';
 
+function ScrollSyncIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M7 10l5-6 5 6" />
+      <path d="M7 14l5 6 5-6" />
+      <line x1="12" y1="4" x2="12" y2="20" />
+    </svg>
+  );
+}
+
+function MinimapIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="17" y1="6" x2="17" y2="18" />
+      <rect x="18" y="8" width="2" height="4" fill="currentColor" />
+    </svg>
+  );
+}
+
 function TopBar() {
   const { settings, updateSettings, openSettings, isDevelopment, effectiveTheme } = useSettings();
   const { isSidebarOpen, editorMode, isAnnotationPanelOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel } = useAppState();
   const { annotations } = useAnnotation();
   const isDark = effectiveTheme === 'dark';
+
+  // スクロール同期トグル
+  const toggleScrollSync = useCallback(() => {
+    updateSettings('editor.scrollSync', !settings.editor.scrollSync);
+  }, [settings.editor.scrollSync, updateSettings]);
+
+  // ミニマップトグル
+  const toggleMinimap = useCallback(() => {
+    updateSettings('editor.showMinimap', !settings.editor.showMinimap);
+  }, [settings.editor.showMinimap, updateSettings]);
 
   // 未解決の注釈数（open + pending）
   const unresolvedCount = annotations.filter(a => !a.resolved).length;
@@ -109,6 +139,25 @@ function TopBar() {
         )}
       </div>
       <div className="top-bar-right">
+        {/* スクロール同期・ミニマップトグル（splitモード時のみ表示） */}
+        {editorMode === 'split' && (
+          <div className="btn-group">
+            <button
+              className={`top-bar-btn icon-only ${settings.editor.scrollSync ? 'active' : ''}`}
+              onClick={toggleScrollSync}
+              title={settings.editor.scrollSync ? 'スクロール同期をオフ' : 'スクロール同期をオン'}
+            >
+              <ScrollSyncIcon />
+            </button>
+            <button
+              className={`top-bar-btn icon-only ${settings.editor.showMinimap ? 'active' : ''}`}
+              onClick={toggleMinimap}
+              title={settings.editor.showMinimap ? 'ミニマップを非表示' : 'ミニマップを表示'}
+            >
+              <MinimapIcon />
+            </button>
+          </div>
+        )}
         <div className="btn-group">
           <button
             className={`top-bar-btn icon-only ${isAnnotationPanelOpen ? 'active' : ''}`}
@@ -449,7 +498,10 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
       <div className="app" ref={appRef}>
         <div
           className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}
-          style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
+          style={{
+            width: isSidebarOpen ? sidebarWidth : 0,
+            minWidth: isSidebarOpen ? 150 : 0,
+          }}
         >
           <FileTree />
         </div>
@@ -472,7 +524,10 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
         {isAnnotationPanelOpen && <ResizeHandle onResize={handleAnnotationResize} position="right" />}
         <div
           className={`annotation-panel ${isAnnotationPanelOpen ? 'open' : 'closed'}`}
-          style={{ width: isAnnotationPanelOpen ? annotationWidth : 0 }}
+          style={{
+            width: isAnnotationPanelOpen ? annotationWidth : 0,
+            minWidth: isAnnotationPanelOpen ? 200 : 0,
+          }}
         >
           <AnnotationPanel />
         </div>

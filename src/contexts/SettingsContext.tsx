@@ -6,7 +6,7 @@ const SettingsContext = createContext(null);
 
 // 環境判定（ビルド時に決定）
 const IS_DEVELOPMENT = import.meta.env.DEV;
-const APP_VERSION = '1.0.24';
+const APP_VERSION = '1.0.26';
 const GITHUB_REPO = 'lutelute/Marginalia';
 
 // Electronアプリかどうかを判定
@@ -30,6 +30,8 @@ const DEFAULT_SETTINGS = {
     lineNumbers: true,
     autoSave: true,
     autoSaveInterval: 30000, // 30秒
+    showMinimap: true, // ミニマップ表示
+    scrollSync: true, // スクロール同期
   },
 
   // プレビュー設定
@@ -70,12 +72,41 @@ const getEffectiveTheme = (theme: 'dark' | 'light' | 'system'): 'dark' | 'light'
   return theme;
 };
 
+// 深いマージ関数（デフォルト設定と保存された設定をマージ）
+function deepMerge<T extends Record<string, any>>(defaults: T, saved: Partial<T>): T {
+  const result = { ...defaults };
+
+  for (const key in saved) {
+    if (saved.hasOwnProperty(key)) {
+      const savedValue = saved[key];
+      const defaultValue = defaults[key];
+
+      // 両方がオブジェクト（配列でない）の場合は再帰的にマージ
+      if (
+        savedValue !== null &&
+        defaultValue !== null &&
+        typeof savedValue === 'object' &&
+        typeof defaultValue === 'object' &&
+        !Array.isArray(savedValue) &&
+        !Array.isArray(defaultValue)
+      ) {
+        result[key] = deepMerge(defaultValue, savedValue);
+      } else if (savedValue !== undefined) {
+        result[key] = savedValue;
+      }
+    }
+  }
+
+  return result;
+}
+
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('marginalia-settings');
     if (saved) {
       try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        // 深いマージで新しいデフォルトプロパティを保持
+        return deepMerge(DEFAULT_SETTINGS, JSON.parse(saved));
       } catch (e) {
         console.error('Failed to parse settings:', e);
       }
@@ -370,7 +401,7 @@ export function SettingsProvider({ children }) {
   const importSettings = useCallback((jsonString) => {
     try {
       const imported = JSON.parse(jsonString);
-      setSettings({ ...DEFAULT_SETTINGS, ...imported });
+      setSettings(deepMerge(DEFAULT_SETTINGS, imported));
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };

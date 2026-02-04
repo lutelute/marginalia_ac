@@ -8,6 +8,34 @@ import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+import { useSettings } from '../../contexts/SettingsContext';
+import {
+  annotationField,
+  flashHighlightField,
+  dispatchAnnotations,
+  dispatchFlashHighlight,
+  findAnnotationPositionInDoc,
+} from './annotationDecorations';
+import {
+  getEditorVisibleLine,
+  getEditorVisibleRange,
+  scrollEditorToLine,
+  cancelScrollSync,
+} from '../../utils/scrollSync';
+import Minimap from './Minimap';
+import AnnotationHoverCard from '../Annotations/AnnotationHoverCard';
+
+// EditorViewを外部と共有するためのContext
+export const EditorViewContext = React.createContext<{
+  view: EditorView | null;
+  scrollToLine: (line: number) => void;
+  getVisibleLine: () => number;
+  getVisibleRange: () => { startLine: number; endLine: number };
+} | null>(null);
+
+export function useEditorView() {
+  return React.useContext(EditorViewContext);
+}
 
 // Markdownシンタックスハイライト（カラフル版）
 const markdownHighlightStyle = HighlightStyle.define([
@@ -165,12 +193,12 @@ function EditorSelectionPopup({ position, onSelect, onClose }) {
         .editor-selection-popup {
           position: absolute;
           display: flex;
-          gap: 4px;
-          padding: 6px;
+          gap: 8px;
+          padding: 12px;
           background-color: var(--bg-secondary);
           border: 1px solid var(--border-color);
-          border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          border-radius: 12px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
           z-index: 100;
           transform: translateX(-50%);
           animation: popupFadeIn 0.15s ease-out;
@@ -191,23 +219,26 @@ function EditorSelectionPopup({ position, onSelect, onClose }) {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 2px;
-          padding: 8px 12px;
-          border-radius: 6px;
+          gap: 6px;
+          padding: 14px 18px;
+          border-radius: 10px;
           transition: all 0.2s;
+          min-width: 70px;
         }
 
         .editor-selection-popup .popup-btn:hover {
           background-color: var(--btn-color);
           color: white;
+          transform: scale(1.05);
         }
 
         .editor-selection-popup .popup-icon {
-          font-size: 16px;
+          font-size: 24px;
         }
 
         .editor-selection-popup .popup-label {
-          font-size: 10px;
+          font-size: 12px;
+          font-weight: 500;
           color: var(--text-secondary);
         }
 
@@ -346,17 +377,64 @@ function EditorAnnotationForm({ type, selectedText, onSubmit, onCancel }) {
   );
 }
 
+// スクロール同期コールバック用の型
+type ScrollSyncCallback = (line: number) => void;
+
+// グローバルなスクロール同期コールバック（エディタ→プレビュー）
+let onEditorScrollCallback: ScrollSyncCallback | null = null;
+
+// グローバルなスクロール同期コールバック（プレビュー→エディタ）
+let onPreviewScrollCallback: ScrollSyncCallback | null = null;
+
+export function setEditorScrollCallback(callback: ScrollSyncCallback | null) {
+  onEditorScrollCallback = callback;
+}
+
+export function setPreviewScrollCallback(callback: ScrollSyncCallback | null) {
+  onPreviewScrollCallback = callback;
+}
+
+// プレビューからエディタへジャンプ（行番号ベース）
+export function triggerEditorScroll(line: number) {
+  if (onPreviewScrollCallback) {
+    onPreviewScrollCallback(line);
+  }
+}
+
 function MarkdownEditor() {
   const editorRef = useRef(null);
   const viewRef = useRef<EditorView | null>(null);
   const { content, currentFile, updateContent, saveFile, isModified, fileMetadata, loadFileMetadata } = useFile();
-  const { setPendingSelection, annotations, scrollToLine, clearScrollToLine, addAnnotation } = useAnnotation();
+  const { setPendingSelection, annotations, scrollToLine, clearScrollToLine, addAnnotation, selectAnnotation, updateAnnotation, resolveAnnotation, deleteAnnotation, addReply } = useAnnotation();
+  const { settings } = useSettings();
   const [showMetadata, setShowMetadata] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [editorSelection, setEditorSelection] = useState(null);
   const [popupPosition, setPopupPosition] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formType, setFormType] = useState(null);
+
+  // ミニマップ用の状態
+  const [visibleRange, setVisibleRange] = useState({ startLine: 1, endLine: 1 });
+  const totalLines = content?.split('\n').length || 1;
+
+  // スクロール同期設定をrefで追跡（クロージャ問題を回避）
+  // undefinedの場合はデフォルトでtrue（localStorage互換性のため）
+  const scrollSyncEnabledRef = useRef(settings.editor.scrollSync ?? true);
+
+  // 注釈ホバーカード用の状態
+  const [hoveredAnnotation, setHoveredAnnotation] = useState<{
+    annotation: any;
+    position: { x: number; y: number };
+  } | null>(null);
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isHoveringCardRef = useRef(false);
+
+  // スクロール同期設定が変わったらrefを更新
+  useEffect(() => {
+    scrollSyncEnabledRef.current = settings.editor.scrollSync ?? true;
+  }, [settings.editor.scrollSync]);
 
   // ファイルが変更されたらメタデータを読み込む
   useEffect(() => {
@@ -365,7 +443,7 @@ function MarkdownEditor() {
     }
   }, [currentFile, loadFileMetadata]);
 
-  // scrollToLineが変更されたらエディタをスクロール
+  // scrollToLineが変更されたらエディタをスクロール＋フラッシュハイライト
   useEffect(() => {
     if (!scrollToLine || !viewRef.current) return;
 
@@ -387,8 +465,32 @@ function MarkdownEditor() {
         selection: { anchor: lineInfo.from },
       });
 
-      // フォーカスを当てる
-      view.focus();
+      // 注釈に対応するテキストをフラッシュハイライト
+      const annotation = annotations.find(a => a.id === scrollToLine.annotationId);
+      let highlighted = false;
+
+      if (annotation && annotation.selectedText) {
+        const pos = findAnnotationPositionInDoc(
+          doc,
+          annotation.selectedText,
+          annotation.occurrenceIndex ?? 0
+        );
+        if (pos) {
+          // フラッシュハイライトを適用（2.5秒間）
+          dispatchFlashHighlight(view, pos.from, pos.to, 2500);
+          highlighted = true;
+        }
+      }
+
+      // テキストが見つからない場合は行全体をハイライト
+      if (!highlighted) {
+        dispatchFlashHighlight(view, lineInfo.from, lineInfo.to, 2500);
+      }
+
+      // フォーカスを当てる（少し遅延）
+      setTimeout(() => {
+        view.focus();
+      }, 50);
 
       // クリアする
       clearScrollToLine();
@@ -396,7 +498,7 @@ function MarkdownEditor() {
       console.error('Failed to scroll to line:', e);
       clearScrollToLine();
     }
-  }, [scrollToLine, clearScrollToLine]);
+  }, [scrollToLine, clearScrollToLine, annotations]);
 
   // エディタの初期化
   useEffect(() => {
@@ -422,6 +524,9 @@ function MarkdownEditor() {
         darkTheme,
         updateListener,
         EditorView.lineWrapping,
+        // 注釈ハイライト用StateField
+        annotationField,
+        flashHighlightField,
       ],
     });
 
@@ -432,11 +537,40 @@ function MarkdownEditor() {
 
     viewRef.current = view;
 
+    // 初期化後に注釈ハイライトを適用
+    if (annotations && annotations.length > 0) {
+      dispatchAnnotations(view, annotations);
+    }
+
+    // スクロールイベントリスナーを追加
+    const scrollerEl = view.scrollDOM;
+    let scrollTimeout: NodeJS.Timeout | null = null;
+
+    const handleScroll = () => {
+      // 可視範囲を更新（ミニマップ用）
+      const range = getEditorVisibleRange(view);
+      setVisibleRange(range);
+
+      // エディタ→プレビューの同期（デバウンス付き）
+      if (scrollTimeout) clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        const isScrollSyncEnabled = scrollSyncEnabledRef.current;
+        if (isScrollSyncEnabled && onEditorScrollCallback) {
+          const line = getEditorVisibleLine(view);
+          onEditorScrollCallback(line);
+        }
+      }, 50);
+    };
+
+    scrollerEl.addEventListener('scroll', handleScroll);
+
     return () => {
+      scrollerEl.removeEventListener('scroll', handleScroll);
+      if (scrollTimeout) clearTimeout(scrollTimeout);
       view.destroy();
       viewRef.current = null;
     };
-  }, [currentFile]); // currentFileが変わったときのみ再初期化
+  }, [currentFile]); // currentFileが変わったときに再初期化（scrollSyncはrefで追跡）
 
   // コンテンツの更新（外部からの変更）
   useEffect(() => {
@@ -453,6 +587,150 @@ function MarkdownEditor() {
       });
     }
   }, [content]);
+
+  // 注釈が変更されたらエディタのデコレーションを更新
+  useEffect(() => {
+    if (!viewRef.current || !annotations) return;
+    dispatchAnnotations(viewRef.current, annotations);
+  }, [annotations]);
+
+  // プレビュークリックでエディタにジャンプ + フラッシュハイライト
+  const handlePreviewJump = useCallback((line: number) => {
+    if (!viewRef.current) return;
+
+    const view = viewRef.current;
+    const doc = view.state.doc;
+
+    if (line < 1 || line > doc.lines) return;
+
+    try {
+      const lineInfo = doc.line(line);
+
+      // 行にスクロール（中央に配置）
+      view.dispatch({
+        effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
+        selection: { anchor: lineInfo.from },
+      });
+
+      // 行全体をフラッシュハイライト（2.5秒間）
+      dispatchFlashHighlight(view, lineInfo.from, lineInfo.to, 2500);
+
+      // フォーカスを当てる
+      setTimeout(() => {
+        view.focus();
+      }, 50);
+    } catch (e) {
+      console.error('Failed to jump to line:', e);
+    }
+  }, []);
+
+  // プレビュークリックでエディタにジャンプするコールバックを設定
+  useEffect(() => {
+    setPreviewScrollCallback(handlePreviewJump);
+    return () => {
+      setPreviewScrollCallback(null);
+    };
+  }, [handlePreviewJump]);
+
+  // ミニマップからのジャンプ
+  const handleMinimapClick = useCallback((line: number) => {
+    if (!viewRef.current) return;
+    scrollEditorToLine(viewRef.current, line, true);
+  }, []);
+
+  // エディタ内の注釈ホバー処理
+  const handleEditorMouseMove = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+
+    // ホバーカード上にいる場合は何もしない
+    if (target.closest('.annotation-hover-card-unified')) {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+        closeTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const annotationEl = target.closest('.cm-annotation-highlight');
+
+    if (annotationEl) {
+      // 閉じるタイマーをキャンセル
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+        closeTimeoutRef.current = null;
+      }
+
+      const annotationId = annotationEl.getAttribute('data-annotation-id');
+      if (annotationId) {
+        const annotation = annotations.find(a => a.id === annotationId);
+        if (annotation) {
+          // ホバーカードを表示（少し遅延させる）
+          if (hoverTimeoutRef.current) {
+            clearTimeout(hoverTimeoutRef.current);
+          }
+          hoverTimeoutRef.current = setTimeout(() => {
+            const rect = annotationEl.getBoundingClientRect();
+            const containerRect = editorRef.current?.getBoundingClientRect();
+            if (containerRect) {
+              setHoveredAnnotation({
+                annotation,
+                position: {
+                  x: rect.left - containerRect.left + rect.width / 2,
+                  y: rect.bottom - containerRect.top + 8,
+                },
+              });
+            }
+          }, 200);
+          return;
+        }
+      }
+    }
+
+    // 注釈外の場合は遅延してカードを非表示（カードに移動する時間を確保）
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    if (!closeTimeoutRef.current && hoveredAnnotation) {
+      closeTimeoutRef.current = setTimeout(() => {
+        if (!isHoveringCardRef.current) {
+          setHoveredAnnotation(null);
+        }
+        closeTimeoutRef.current = null;
+      }, 300);
+    }
+  }, [annotations, hoveredAnnotation]);
+
+  const handleEditorMouseLeave = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    // 遅延して閉じる（カードに移動する時間を確保）
+    if (!closeTimeoutRef.current) {
+      closeTimeoutRef.current = setTimeout(() => {
+        if (!isHoveringCardRef.current) {
+          setHoveredAnnotation(null);
+        }
+        closeTimeoutRef.current = null;
+      }, 300);
+    }
+  }, []);
+
+  // カード上のホバー状態を追跡
+  const handleCardMouseEnter = useCallback(() => {
+    isHoveringCardRef.current = true;
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleCardMouseLeave = useCallback(() => {
+    isHoveringCardRef.current = false;
+    closeTimeoutRef.current = setTimeout(() => {
+      setHoveredAnnotation(null);
+      closeTimeoutRef.current = null;
+    }, 200);
+  }, []);
 
   // テキスト選択時の処理
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
@@ -471,12 +749,24 @@ function MarkdownEditor() {
     const toLine = doc.lineAt(selection.to);
     const selectedText = doc.sliceString(selection.from, selection.to);
 
+    // 同一テキストの何番目の出現かを計算
+    const fullText = doc.toString();
+    let occurrenceIndex = 0;
+    let searchPos = 0;
+    while (searchPos < selection.from) {
+      const foundPos = fullText.indexOf(selectedText, searchPos);
+      if (foundPos === -1 || foundPos >= selection.from) break;
+      occurrenceIndex++;
+      searchPos = foundPos + 1;
+    }
+
     const selectionData = {
       startLine: fromLine.number,
       endLine: toLine.number,
       startChar: selection.from - fromLine.from,
       endChar: selection.to - toLine.from,
       text: selectedText,
+      occurrenceIndex,
     };
 
     setPendingSelection(selectionData);
@@ -793,16 +1083,55 @@ ${styledMd}
         </div>
       )}
 
-      <div
-        className="editor-container"
-        ref={editorRef}
-        onMouseUp={handleMouseUp}
-      >
-        {popupPosition && editorSelection && (
-          <EditorSelectionPopup
-            position={popupPosition}
-            onSelect={handleSelectType}
-            onClose={handleClosePopup}
+      <div className="editor-main-area">
+        <div
+          className="editor-container"
+          ref={editorRef}
+          onMouseUp={handleMouseUp}
+          onMouseMove={handleEditorMouseMove}
+          onMouseLeave={handleEditorMouseLeave}
+        >
+          {popupPosition && editorSelection && (
+            <EditorSelectionPopup
+              position={popupPosition}
+              onSelect={handleSelectType}
+              onClose={handleClosePopup}
+            />
+          )}
+
+          {/* 注釈ホバーカード */}
+          {hoveredAnnotation && (
+            <AnnotationHoverCard
+              annotation={hoveredAnnotation.annotation}
+              position={hoveredAnnotation.position}
+              onClose={() => setHoveredAnnotation(null)}
+              onSelect={(id) => {
+                setHoveredAnnotation(null);
+                selectAnnotation(id);
+              }}
+              onUpdate={(id, updates) => updateAnnotation(id, updates)}
+              onResolve={(id, resolved) => resolveAnnotation(id, resolved)}
+              onDelete={(id) => {
+                deleteAnnotation(id);
+                setHoveredAnnotation(null);
+              }}
+              onAddReply={(id, content) => addReply(id, content)}
+              source="editor"
+              onMouseEnter={handleCardMouseEnter}
+              onMouseLeave={handleCardMouseLeave}
+            />
+          )}
+        </div>
+
+        {/* ミニマップ */}
+        {settings.editor.showMinimap && (
+          <Minimap
+            content={content || ''}
+            annotations={annotations || []}
+            visibleStartLine={visibleRange.startLine}
+            visibleEndLine={visibleRange.endLine}
+            totalLines={totalLines}
+            onLineClick={handleMinimapClick}
           />
         )}
       </div>
@@ -821,7 +1150,9 @@ ${styledMd}
           display: flex;
           flex-direction: column;
           height: 100%;
+          width: 100%;
           background-color: var(--bg-primary);
+          min-width: 0;
         }
 
         .editor-header {
@@ -1008,14 +1339,47 @@ ${styledMd}
           color: var(--text-muted);
         }
 
+        .editor-main-area {
+          flex: 1;
+          display: flex;
+          overflow: hidden;
+          position: relative;
+          min-width: 0;
+          width: 100%;
+        }
+
         .editor-container {
           flex: 1;
           overflow: hidden;
           position: relative;
+          min-width: 0;
+          width: 100%;
         }
 
         .editor-container .cm-editor {
           height: 100%;
+        }
+
+        /* 注釈ハイライトスタイル */
+        .cm-annotation-highlight {
+          background-color: color-mix(in srgb, var(--highlight-color) 25%, transparent);
+          border-bottom: 2px solid var(--highlight-color);
+          border-radius: 2px;
+        }
+        .cm-annotation-comment { --highlight-color: var(--comment-color); }
+        .cm-annotation-review { --highlight-color: var(--review-color); }
+        .cm-annotation-pending { --highlight-color: var(--pending-color); }
+        .cm-annotation-discussion { --highlight-color: var(--discussion-color); }
+
+        /* フラッシュハイライト */
+        .cm-flash-highlight {
+          background-color: var(--accent-color) !important;
+          animation: flash-fade 2s ease-out;
+        }
+
+        @keyframes flash-fade {
+          0% { background-color: var(--accent-color); }
+          100% { background-color: transparent; }
         }
       `}</style>
     </div>

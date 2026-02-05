@@ -4,10 +4,15 @@ const crypto = require('crypto');
 
 const MARGINALIA_DIR = '.marginalia';
 const BACKUP_DIR = 'backups';
+const ANNOTATION_BACKUP_DIR = 'annotation-backups';
 const MARGINALIA_EXT = '.mrgl';
 const BACKUP_EXT = '.bak';
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown'];
 const MAX_BACKUPS = 20; // 保持するバックアップの最大数
+
+// ---------------------------------------------------------------------------
+// ディレクトリ読み込み
+// ---------------------------------------------------------------------------
 
 /**
  * ディレクトリを再帰的に読み込み、Markdownファイルのみをフィルタリング
@@ -56,9 +61,10 @@ async function readDirectory(dirPath, relativePath = '') {
   return result;
 }
 
-/**
- * ファイルを読み込み
- */
+// ---------------------------------------------------------------------------
+// ファイル読み書き
+// ---------------------------------------------------------------------------
+
 async function readFile(filePath) {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
@@ -68,17 +74,12 @@ async function readFile(filePath) {
   }
 }
 
-/**
- * ファイルに書き込み（自動バックアップ付き）
- */
 async function writeFile(filePath, content) {
   try {
-    // 既存ファイルがあればバックアップを作成
     const fileExists = await exists(filePath);
     if (fileExists) {
       await createBackup(filePath);
     }
-
     await fs.writeFile(filePath, content, 'utf-8');
     return { success: true };
   } catch (error) {
@@ -86,8 +87,12 @@ async function writeFile(filePath, content) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// パス / ID ヘルパー
+// ---------------------------------------------------------------------------
+
 /**
- * ファイルパスからユニークなハッシュIDを生成
+ * 旧互換: 絶対パスからハッシュIDを生成（マイグレーション用に残す）
  */
 function generateFileId(filePath) {
   const hash = crypto.createHash('sha256').update(filePath).digest('hex');
@@ -95,29 +100,97 @@ function generateFileId(filePath) {
 }
 
 /**
- * バックアップディレクトリのパスを取得
+ * ファイル名ステム（拡張子なし）を取得
  */
-function getBackupDir(filePath) {
-  const dir = path.dirname(filePath);
-  return path.join(dir, MARGINALIA_DIR, BACKUP_DIR);
+function fileStem(filePath) {
+  return path.basename(filePath, path.extname(filePath));
 }
 
 /**
- * バックアップを作成
+ * Marginaliaディレクトリのパスを取得
  */
+function getMarginaliaDir(filePath) {
+  return path.join(path.dirname(filePath), MARGINALIA_DIR);
+}
+
+function getBackupDir(filePath) {
+  return path.join(getMarginaliaDir(filePath), BACKUP_DIR);
+}
+
+function getAnnotationBackupDir(filePath) {
+  return path.join(getMarginaliaDir(filePath), ANNOTATION_BACKUP_DIR);
+}
+
+/**
+ * Marginaliaファイルのパスを取得（新形式: filename.mrgl）
+ */
+function getMarginaliaPath(filePath) {
+  return path.join(getMarginaliaDir(filePath), `${fileStem(filePath)}${MARGINALIA_EXT}`);
+}
+
+/**
+ * 旧形式のMarginaliaパスを取得（filename_hash.mrgl）
+ */
+function getLegacyMarginaliaPath(filePath) {
+  const fileId = generateFileId(filePath);
+  return path.join(getMarginaliaDir(filePath), `${fileStem(filePath)}_${fileId}${MARGINALIA_EXT}`);
+}
+
+// ---------------------------------------------------------------------------
+// マイグレーション: 旧hash形式 → 新filename形式
+// ---------------------------------------------------------------------------
+
+/**
+ * 旧形式 .mrgl があれば新形式にリネーム
+ * @returns {boolean} マイグレーションが実行されたか
+ */
+async function migrateIfNeeded(filePath) {
+  const newPath = getMarginaliaPath(filePath);
+  if (await exists(newPath)) return false;
+
+  // 1. 旧hash形式（絶対パスベース）をチェック
+  const legacyPath = getLegacyMarginaliaPath(filePath);
+  if (await exists(legacyPath)) {
+    await fs.rename(legacyPath, newPath);
+    console.log(`[migrate] ${path.basename(legacyPath)} -> ${path.basename(newPath)}`);
+    return true;
+  }
+
+  // 2. 任意のhash付きファイルをスキャン（パスが変わった場合）
+  const marginaliaDir = getMarginaliaDir(filePath);
+  const stem = fileStem(filePath);
+  try {
+    const entries = await fs.readdir(marginaliaDir);
+    const candidate = entries.find(
+      (e) => e.startsWith(stem + '_') && e.endsWith(MARGINALIA_EXT) && e !== path.basename(newPath)
+    );
+    if (candidate) {
+      await fs.rename(path.join(marginaliaDir, candidate), newPath);
+      console.log(`[migrate] ${candidate} -> ${path.basename(newPath)}`);
+      return true;
+    }
+  } catch {
+    // marginaliaディレクトリが存在しない場合は無視
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// バックアップ（MDファイル本体）
+// ---------------------------------------------------------------------------
+
 async function createBackup(filePath) {
   try {
     const backupDir = getBackupDir(filePath);
     await fs.mkdir(backupDir, { recursive: true });
 
     const content = await fs.readFile(filePath, 'utf-8');
-    const fileName = path.basename(filePath, path.extname(filePath));
-    const fileId = generateFileId(filePath);
+    const stem = fileStem(filePath);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupName = `${fileName}_${fileId}_${timestamp}${BACKUP_EXT}`;
+    const backupName = `${stem}_${timestamp}${BACKUP_EXT}`;
     const backupPath = path.join(backupDir, backupName);
 
-    // バックアップメタデータ付きで保存
     const backupData = {
       _tool: 'marginalia-backup',
       _version: '1.0.0',
@@ -128,8 +201,6 @@ async function createBackup(filePath) {
     };
 
     await fs.writeFile(backupPath, JSON.stringify(backupData, null, 2), 'utf-8');
-
-    // 古いバックアップを削除
     await cleanupOldBackups(filePath);
 
     return { success: true, backupPath };
@@ -139,21 +210,18 @@ async function createBackup(filePath) {
   }
 }
 
-/**
- * 古いバックアップを削除
- */
 async function cleanupOldBackups(filePath) {
   try {
     const backupDir = getBackupDir(filePath);
-    const fileId = generateFileId(filePath);
+    const stem = fileStem(filePath);
 
     const entries = await fs.readdir(backupDir);
+    // 新形式（stem_timestamp.bak）と旧形式（stem_hash_timestamp.bak）の両方にマッチ
     const backups = entries
-      .filter((name) => name.includes(fileId) && name.endsWith(BACKUP_EXT))
+      .filter((name) => name.startsWith(stem + '_') && name.endsWith(BACKUP_EXT))
       .sort()
       .reverse();
 
-    // MAX_BACKUPSを超えた古いバックアップを削除
     if (backups.length > MAX_BACKUPS) {
       const toDelete = backups.slice(MAX_BACKUPS);
       for (const backup of toDelete) {
@@ -165,13 +233,10 @@ async function cleanupOldBackups(filePath) {
   }
 }
 
-/**
- * バックアップ一覧を取得
- */
 async function listBackups(filePath) {
   try {
     const backupDir = getBackupDir(filePath);
-    const fileId = generateFileId(filePath);
+    const stem = fileStem(filePath);
 
     try {
       await fs.access(backupDir);
@@ -181,7 +246,7 @@ async function listBackups(filePath) {
 
     const entries = await fs.readdir(backupDir);
     const backupFiles = entries
-      .filter((name) => name.includes(fileId) && name.endsWith(BACKUP_EXT))
+      .filter((name) => name.startsWith(stem + '_') && name.endsWith(BACKUP_EXT))
       .sort()
       .reverse();
 
@@ -212,9 +277,6 @@ async function listBackups(filePath) {
   }
 }
 
-/**
- * バックアップから復元
- */
 async function restoreBackup(backupPath, targetPath) {
   try {
     const content = await fs.readFile(backupPath, 'utf-8');
@@ -224,23 +286,18 @@ async function restoreBackup(backupPath, targetPath) {
       return { success: false, error: 'Invalid backup file' };
     }
 
-    // 現在のファイルをバックアップしてから復元
     const fileExists = await exists(targetPath);
     if (fileExists) {
       await createBackup(targetPath);
     }
 
     await fs.writeFile(targetPath, data.content, 'utf-8');
-
     return { success: true, content: data.content };
   } catch (error) {
     return { success: false, error: error.message };
   }
 }
 
-/**
- * バックアップの内容をプレビュー
- */
 async function previewBackup(backupPath) {
   try {
     const content = await fs.readFile(backupPath, 'utf-8');
@@ -261,9 +318,6 @@ async function previewBackup(backupPath) {
   }
 }
 
-/**
- * バックアップを削除
- */
 async function deleteBackup(backupPath) {
   try {
     await fs.unlink(backupPath);
@@ -273,21 +327,14 @@ async function deleteBackup(backupPath) {
   }
 }
 
-/**
- * Marginaliaファイルのパスを取得
- */
-function getMarginaliaPath(filePath) {
-  const dir = path.dirname(filePath);
-  const fileName = path.basename(filePath, path.extname(filePath));
-  const fileId = generateFileId(filePath);
-  const marginaliaDir = path.join(dir, MARGINALIA_DIR);
-  return path.join(marginaliaDir, `${fileName}_${fileId}${MARGINALIA_EXT}`);
-}
+// ---------------------------------------------------------------------------
+// 注釈データ（.mrgl）
+// ---------------------------------------------------------------------------
 
-/**
- * Marginaliaファイルを読み込み
- */
 async function readMarginalia(filePath) {
+  // 旧形式 → 新形式のマイグレーション
+  await migrateIfNeeded(filePath);
+
   const marginaliaPath = getMarginaliaPath(filePath);
 
   try {
@@ -297,7 +344,6 @@ async function readMarginalia(filePath) {
       return { success: false, error: 'Invalid Marginalia file format' };
     }
 
-    // バージョン検出: V1ならneedsMigrationフラグを付与
     const version = data._version || '1.0.0';
     const needsMigration = version === '1.0.0';
 
@@ -309,7 +355,6 @@ async function readMarginalia(filePath) {
         data: {
           _tool: 'marginalia',
           _version: '2.0.0',
-          fileId: generateFileId(filePath),
           filePath: filePath,
           fileName: path.basename(filePath),
           lastModified: new Date().toISOString(),
@@ -323,9 +368,6 @@ async function readMarginalia(filePath) {
   }
 }
 
-/**
- * Marginaliaファイルに書き込み（自動バックアップ付き）
- */
 async function writeMarginalia(filePath, data) {
   const marginaliaPath = getMarginaliaPath(filePath);
   const marginaliaDir = path.dirname(marginaliaPath);
@@ -333,7 +375,6 @@ async function writeMarginalia(filePath, data) {
   try {
     await fs.mkdir(marginaliaDir, { recursive: true });
 
-    // 既存の注釈データがあればバックアップ
     const fileExists = await exists(marginaliaPath);
     if (fileExists) {
       await createMarginaliaBackup(marginaliaPath, filePath);
@@ -347,29 +388,27 @@ async function writeMarginalia(filePath, data) {
   }
 }
 
-/**
- * 注釈データのバックアップを作成
- */
+// ---------------------------------------------------------------------------
+// 注釈バックアップ
+// ---------------------------------------------------------------------------
+
 async function createMarginaliaBackup(marginaliaPath, originalFilePath) {
   try {
-    const backupDir = path.join(path.dirname(marginaliaPath), 'annotation-backups');
+    const backupDir = getAnnotationBackupDir(originalFilePath);
     await fs.mkdir(backupDir, { recursive: true });
 
     const content = await fs.readFile(marginaliaPath, 'utf-8');
     const existingData = JSON.parse(content);
 
-    // 注釈が空の場合はバックアップしない
     if (!existingData.annotations || existingData.annotations.length === 0) {
       return { success: true, skipped: true };
     }
 
-    const fileName = path.basename(originalFilePath, path.extname(originalFilePath));
-    const fileId = generateFileId(originalFilePath);
+    const stem = fileStem(originalFilePath);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupName = `${fileName}_${fileId}_${timestamp}.mrgl.bak`;
+    const backupName = `${stem}_${timestamp}.mrgl.bak`;
     const backupPath = path.join(backupDir, backupName);
 
-    // バックアップメタデータ付きで保存
     const backupData = {
       _tool: 'marginalia-annotation-backup',
       _version: '1.0.0',
@@ -382,9 +421,7 @@ async function createMarginaliaBackup(marginaliaPath, originalFilePath) {
     };
 
     await fs.writeFile(backupPath, JSON.stringify(backupData, null, 2), 'utf-8');
-
-    // 古いバックアップを削除
-    await cleanupOldMarginaliaBackups(backupDir, fileId);
+    await cleanupOldMarginaliaBackups(backupDir, stem);
 
     return { success: true, backupPath };
   } catch (error) {
@@ -393,18 +430,14 @@ async function createMarginaliaBackup(marginaliaPath, originalFilePath) {
   }
 }
 
-/**
- * 古い注釈バックアップを削除
- */
-async function cleanupOldMarginaliaBackups(backupDir, fileId) {
+async function cleanupOldMarginaliaBackups(backupDir, stem) {
   try {
     const entries = await fs.readdir(backupDir);
     const backups = entries
-      .filter((name) => name.includes(fileId) && name.endsWith('.mrgl.bak'))
+      .filter((name) => name.startsWith(stem + '_') && name.endsWith('.mrgl.bak'))
       .sort()
       .reverse();
 
-    // MAX_BACKUPSを超えた古いバックアップを削除
     if (backups.length > MAX_BACKUPS) {
       const toDelete = backups.slice(MAX_BACKUPS);
       for (const backup of toDelete) {
@@ -416,14 +449,10 @@ async function cleanupOldMarginaliaBackups(backupDir, fileId) {
   }
 }
 
-/**
- * 注釈バックアップ一覧を取得
- */
 async function listMarginaliaBackups(filePath) {
   try {
-    const marginaliaPath = getMarginaliaPath(filePath);
-    const backupDir = path.join(path.dirname(marginaliaPath), 'annotation-backups');
-    const fileId = generateFileId(filePath);
+    const backupDir = getAnnotationBackupDir(filePath);
+    const stem = fileStem(filePath);
 
     try {
       await fs.access(backupDir);
@@ -432,8 +461,9 @@ async function listMarginaliaBackups(filePath) {
     }
 
     const entries = await fs.readdir(backupDir);
+    // 新形式（stem_timestamp）と旧形式（stem_hash_timestamp）の両方にマッチ
     const backupFiles = entries
-      .filter((name) => name.includes(fileId) && name.endsWith('.mrgl.bak'))
+      .filter((name) => name.startsWith(stem + '_') && name.endsWith('.mrgl.bak'))
       .sort()
       .reverse();
 
@@ -464,9 +494,6 @@ async function listMarginaliaBackups(filePath) {
   }
 }
 
-/**
- * 注釈バックアップから復元
- */
 async function restoreMarginaliaBackup(backupPath, filePath) {
   try {
     const content = await fs.readFile(backupPath, 'utf-8');
@@ -479,7 +506,6 @@ async function restoreMarginaliaBackup(backupPath, filePath) {
     const marginaliaPath = getMarginaliaPath(filePath);
     const marginaliaDir = path.dirname(marginaliaPath);
 
-    // 現在の注釈をバックアップしてから復元
     const fileExists = await exists(marginaliaPath);
     if (fileExists) {
       await createMarginaliaBackup(marginaliaPath, filePath);
@@ -494,9 +520,134 @@ async function restoreMarginaliaBackup(backupPath, filePath) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ファイル移動・リネーム
+// ---------------------------------------------------------------------------
+
 /**
- * ファイルの存在確認
+ * Markdownファイルを移動し、注釈・バックアップも自動追従
+ * @param {string} oldPath - 移動元の絶対パス
+ * @param {string} newPath - 移動先の絶対パス
  */
+async function moveFile(oldPath, newPath) {
+  try {
+    // 移動先ディレクトリを作成
+    await fs.mkdir(path.dirname(newPath), { recursive: true });
+
+    // 1. MDファイルを移動
+    await fs.rename(oldPath, newPath);
+
+    // 2. .mrglファイルを移動
+    const oldMrgl = getMarginaliaPath(oldPath);
+    const newMrgl = getMarginaliaPath(newPath);
+
+    // 旧形式も試行（マイグレーション未済の場合）
+    let mrglSource = null;
+    if (await exists(oldMrgl)) {
+      mrglSource = oldMrgl;
+    } else {
+      const legacyMrgl = getLegacyMarginaliaPath(oldPath);
+      if (await exists(legacyMrgl)) {
+        mrglSource = legacyMrgl;
+      }
+    }
+
+    if (mrglSource) {
+      await fs.mkdir(getMarginaliaDir(newPath), { recursive: true });
+      await fs.rename(mrglSource, newMrgl);
+
+      // .mrgl内のメタデータを更新
+      try {
+        const content = await fs.readFile(newMrgl, 'utf-8');
+        const data = JSON.parse(content);
+        data.filePath = newPath;
+        data.fileName = path.basename(newPath);
+        delete data.fileId; // 旧形式のhash IDを削除
+        await fs.writeFile(newMrgl, JSON.stringify(data, null, 2), 'utf-8');
+      } catch (e) {
+        console.error('Failed to update .mrgl metadata:', e);
+      }
+    }
+
+    // 3. バックアップディレクトリを移動（存在する場合）
+    await moveSidecarDir(getBackupDir(oldPath), getBackupDir(newPath));
+    await moveSidecarDir(getAnnotationBackupDir(oldPath), getAnnotationBackupDir(newPath));
+
+    // 4. 元の.marginaliaディレクトリが空なら削除
+    await removeEmptyDir(getMarginaliaDir(oldPath));
+
+    return { success: true, newPath };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Markdownファイルの名前を変更し、注釈・バックアップも自動追従
+ * @param {string} filePath - 対象ファイルの絶対パス
+ * @param {string} newName - 新しいファイル名（例: "document.md"）
+ */
+async function renameFile(filePath, newName) {
+  const dir = path.dirname(filePath);
+  const newPath = path.join(dir, newName);
+
+  if (filePath === newPath) {
+    return { success: true, newPath };
+  }
+
+  // 移動先に同名ファイルが存在するか確認
+  if (await exists(newPath)) {
+    return { success: false, error: `${newName} は既に存在します` };
+  }
+
+  try {
+    // 1. MDファイルをリネーム
+    await fs.rename(filePath, newPath);
+
+    // 2. .mrglファイルをリネーム
+    const oldMrgl = getMarginaliaPath(filePath);
+    const newMrgl = getMarginaliaPath(newPath);
+
+    // 旧形式も試行
+    let mrglSource = null;
+    if (await exists(oldMrgl)) {
+      mrglSource = oldMrgl;
+    } else {
+      const legacyMrgl = getLegacyMarginaliaPath(filePath);
+      if (await exists(legacyMrgl)) {
+        mrglSource = legacyMrgl;
+      }
+    }
+
+    if (mrglSource) {
+      await fs.rename(mrglSource, newMrgl);
+
+      // メタデータを更新
+      try {
+        const content = await fs.readFile(newMrgl, 'utf-8');
+        const data = JSON.parse(content);
+        data.filePath = newPath;
+        data.fileName = newName;
+        delete data.fileId;
+        await fs.writeFile(newMrgl, JSON.stringify(data, null, 2), 'utf-8');
+      } catch (e) {
+        console.error('Failed to update .mrgl metadata:', e);
+      }
+    }
+
+    // 注: 同ディレクトリ内のリネームなのでバックアップはそのまま使える
+    // （バックアップは旧名のstemで検索されるが、メタデータ内のfileNameで識別可能）
+
+    return { success: true, newPath };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ユーティリティ
+// ---------------------------------------------------------------------------
+
 async function exists(filePath) {
   try {
     await fs.access(filePath);
@@ -507,8 +658,41 @@ async function exists(filePath) {
 }
 
 /**
- * ファイルのメタデータを取得
+ * サイドカーディレクトリ内のファイルを移動
  */
+async function moveSidecarDir(oldDir, newDir) {
+  try {
+    await fs.access(oldDir);
+  } catch {
+    return; // 存在しなければ何もしない
+  }
+
+  try {
+    await fs.mkdir(newDir, { recursive: true });
+    const entries = await fs.readdir(oldDir);
+    for (const entry of entries) {
+      await fs.rename(path.join(oldDir, entry), path.join(newDir, entry));
+    }
+    await removeEmptyDir(oldDir);
+  } catch (error) {
+    console.error('Failed to move sidecar dir:', error);
+  }
+}
+
+/**
+ * ディレクトリが空なら削除（再帰的に親も試行）
+ */
+async function removeEmptyDir(dirPath) {
+  try {
+    const entries = await fs.readdir(dirPath);
+    if (entries.length === 0) {
+      await fs.rmdir(dirPath);
+    }
+  } catch {
+    // 無視
+  }
+}
+
 async function getFileStats(filePath) {
   try {
     const stats = await fs.stat(filePath);
@@ -536,9 +720,6 @@ async function getFileStats(filePath) {
   }
 }
 
-/**
- * ファイルサイズをフォーマット
- */
 function formatFileSize(bytes) {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -562,4 +743,6 @@ module.exports = {
   getFileStats,
   listMarginaliaBackups,
   restoreMarginaliaBackup,
+  moveFile,
+  renameFile,
 };

@@ -138,57 +138,53 @@ TopBar左側のボタンで：
 your-project/
 ├── document.md
 └── .marginalia/
-    ├── document_abc123.mrgl           # 注釈データ
-    └── backups/
-        └── document_abc123_2026-...   # バックアップ
+    ├── document.mrgl                 # 注釈データ
+    ├── backups/
+    │   └── document_2026-02-05...    # MDバックアップ
+    └── annotation-backups/
+        └── document_2026-02-05...    # 注釈バックアップ
 ```
 
-### ファイルの移動と注釈の引き継ぎ
+`.mrgl` ファイルはMarkdownのファイル名と1:1で対応します（`document.md` → `document.mrgl`）。絶対パスに依存しないため、プロジェクトフォルダごと移動しても注釈は維持されます。
 
-注釈ファイル (`.mrgl`) はMarkdownファイルの**絶対パス**からハッシュIDを生成して紐付けています。そのため、ファイルを移動・リネームすると注釈との対応が切れます。
+> **Note:** v1.0.x で作成された旧形式（`document_abc123.mrgl`）は初回アクセス時に自動マイグレーションされます。
 
-注釈を引き継ぐ手順：
+### ファイルの移動・リネーム
 
-**1. 移動前の `.mrgl` ファイル名を確認**
-```
-.marginalia/
-  document_a1b2c3d4e5f6.mrgl   ← これを控えておく
-```
+ファイルを移動/リネームする方法は3通りあります：
 
-**2. Markdownファイルを移動**
+**方法1: アプリ内操作（推奨）**
+
+ファイルツリーで右クリック → 「名前変更」または「移動...」を選択。注釈・バックアップが自動で追従します。
+
+**方法2: CLIスクリプト**
+
 ```bash
-mv /old/path/document.md /new/path/document.md
+# リネーム
+node scripts/move-with-annotations.js docs/old.md docs/new.md
+
+# ディレクトリ移動
+node scripts/move-with-annotations.js docs/file.md archive/
 ```
 
-**3. 新しいパスのハッシュIDを計算**
+**方法3: 手動**
+
+`.mrgl` はファイル名ベースなので、手順はシンプルです：
+
 ```bash
-echo -n "/new/path/document.md" | shasum -a 256 | cut -c1-12
-# 例: 7f8e9d0c1b2a
+# 1. MDファイルを移動
+mv docs/old.md archive/old.md
+
+# 2. .mrglファイルを同じ場所に移動
+mkdir -p archive/.marginalia
+mv docs/.marginalia/old.mrgl archive/.marginalia/old.mrgl
 ```
 
-**4. `.mrgl` ファイルをリネームして移動先の `.marginalia/` に配置**
+リネームの場合は `.mrgl` も同じ名前に変更するだけです：
 ```bash
-# 移動先に .marginalia ディレクトリを作成
-mkdir -p /new/path/.marginalia
-
-# リネームして移動
-mv /old/path/.marginalia/document_a1b2c3d4e5f6.mrgl \
-   /new/path/.marginalia/document_7f8e9d0c1b2a.mrgl
+mv docs/old.md docs/new.md
+mv docs/.marginalia/old.mrgl docs/.marginalia/new.mrgl
 ```
-
-**5. `.mrgl` ファイル内のパス情報を更新**
-
-`.mrgl` はJSONファイルなので、テキストエディタで `filePath` と `fileId` を書き換えます：
-```json
-{
-  "fileId": "7f8e9d0c1b2a",
-  "filePath": "/new/path/document.md",
-  "fileName": "document.md",
-  ...
-}
-```
-
-> **Note:** バックアップファイル（`backups/`, `annotation-backups/`）も同様にリネーム・移動できますが、必須ではありません。
 
 ### 設定
 

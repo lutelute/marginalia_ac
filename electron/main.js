@@ -134,6 +134,16 @@ ipcMain.handle('fs:restoreMarginaliaBackup', async (event, backupPath, filePath)
   return await fileSystem.restoreMarginaliaBackup(backupPath, filePath);
 });
 
+// ファイル移動（注釈も自動追従）
+ipcMain.handle('fs:moveFile', async (event, oldPath, newPath) => {
+  return await fileSystem.moveFile(oldPath, newPath);
+});
+
+// ファイルリネーム（注釈も自動追従）
+ipcMain.handle('fs:renameFile', async (event, filePath, newName) => {
+  return await fileSystem.renameFile(filePath, newName);
+});
+
 // Auto Update IPC Handlers
 
 // アップデート確認

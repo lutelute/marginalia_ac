@@ -458,6 +458,48 @@ export function FileProvider({ children }) {
     }
   }, []);
 
+  // ファイルリネーム（注釈も自動追従）
+  const renameFileWithAnnotations = useCallback(async (filePath: string, newName: string) => {
+    try {
+      const result = await window.electronAPI.renameFile(filePath, newName);
+      if (!result?.success) {
+        return { success: false, error: result?.error || 'リネーム失敗' };
+      }
+      // 現在開いているファイルがリネーム対象なら更新
+      if (state.currentFile === filePath) {
+        dispatch({ type: 'SET_CURRENT_FILE', payload: result.newPath });
+      }
+      // ファイルツリーを更新
+      if (state.rootPath) {
+        const tree = await window.electronAPI.readDirectory(state.rootPath);
+        dispatch({ type: 'SET_FILE_TREE', payload: tree });
+      }
+      return { success: true, newPath: result.newPath };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }, [state.currentFile, state.rootPath]);
+
+  // ファイル移動（注釈も自動追従）
+  const moveFileWithAnnotations = useCallback(async (oldPath: string, newPath: string) => {
+    try {
+      const result = await window.electronAPI.moveFile(oldPath, newPath);
+      if (!result?.success) {
+        return { success: false, error: result?.error || '移動失敗' };
+      }
+      if (state.currentFile === oldPath) {
+        dispatch({ type: 'SET_CURRENT_FILE', payload: result.newPath });
+      }
+      if (state.rootPath) {
+        const tree = await window.electronAPI.readDirectory(state.rootPath);
+        dispatch({ type: 'SET_FILE_TREE', payload: tree });
+      }
+      return { success: true, newPath: result.newPath };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }, [state.currentFile, state.rootPath]);
+
   // 定期的に外部変更をチェック（5秒ごと）
   useEffect(() => {
     if (!state.currentFile) return;
@@ -508,6 +550,9 @@ export function FileProvider({ children }) {
     checkExternalChange,
     reloadFile,
     clearExternalChange,
+    // ファイル操作
+    renameFileWithAnnotations,
+    moveFileWithAnnotations,
     // 孤立ファイル管理
     detectOrphanedFiles,
     exportOrphanedFile,

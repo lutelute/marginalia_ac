@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listMarginaliaBackups: (filePath) => ipcRenderer.invoke('fs:listMarginaliaBackups', filePath),
   restoreMarginaliaBackup: (backupPath, filePath) => ipcRenderer.invoke('fs:restoreMarginaliaBackup', backupPath, filePath),
 
+  // ファイル移動・リネーム
+  moveFile: (oldPath, newPath) => ipcRenderer.invoke('fs:moveFile', oldPath, newPath),
+  renameFile: (filePath, newName) => ipcRenderer.invoke('fs:renameFile', filePath, newName),
+
   // ユーティリティ
   exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),
   getFileStats: (filePath) => ipcRenderer.invoke('fs:getFileStats', filePath),

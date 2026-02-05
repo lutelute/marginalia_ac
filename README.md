@@ -143,6 +143,53 @@ your-project/
         └── document_abc123_2026-...   # バックアップ
 ```
 
+### ファイルの移動と注釈の引き継ぎ
+
+注釈ファイル (`.mrgl`) はMarkdownファイルの**絶対パス**からハッシュIDを生成して紐付けています。そのため、ファイルを移動・リネームすると注釈との対応が切れます。
+
+注釈を引き継ぐ手順：
+
+**1. 移動前の `.mrgl` ファイル名を確認**
+```
+.marginalia/
+  document_a1b2c3d4e5f6.mrgl   ← これを控えておく
+```
+
+**2. Markdownファイルを移動**
+```bash
+mv /old/path/document.md /new/path/document.md
+```
+
+**3. 新しいパスのハッシュIDを計算**
+```bash
+echo -n "/new/path/document.md" | shasum -a 256 | cut -c1-12
+# 例: 7f8e9d0c1b2a
+```
+
+**4. `.mrgl` ファイルをリネームして移動先の `.marginalia/` に配置**
+```bash
+# 移動先に .marginalia ディレクトリを作成
+mkdir -p /new/path/.marginalia
+
+# リネームして移動
+mv /old/path/.marginalia/document_a1b2c3d4e5f6.mrgl \
+   /new/path/.marginalia/document_7f8e9d0c1b2a.mrgl
+```
+
+**5. `.mrgl` ファイル内のパス情報を更新**
+
+`.mrgl` はJSONファイルなので、テキストエディタで `filePath` と `fileId` を書き換えます：
+```json
+{
+  "fileId": "7f8e9d0c1b2a",
+  "filePath": "/new/path/document.md",
+  "fileName": "document.md",
+  ...
+}
+```
+
+> **Note:** バックアップファイル（`backups/`, `annotation-backups/`）も同様にリネーム・移動できますが、必須ではありません。
+
 ### 設定
 
 アプリケーション設定は `localStorage` に保存されます。

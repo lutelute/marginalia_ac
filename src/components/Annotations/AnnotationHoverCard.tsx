@@ -42,6 +42,18 @@ function AnnotationHoverCard({
   const [mode, setMode] = useState<'view' | 'edit' | 'reply' | 'delete'>('view');
   const [editContent, setEditContent] = useState(annotation.content);
   const [replyContent, setReplyContent] = useState('');
+  const [adjustedY, setAdjustedY] = useState(position.y);
+
+  // 下端クランプ: カード描画後にビューポート下端チェック
+  useEffect(() => {
+    setAdjustedY(position.y);
+    if (!cardRef.current) return;
+    const cardHeight = cardRef.current.getBoundingClientRect().height;
+    const margin = 8;
+    if (position.y + cardHeight > window.innerHeight - margin) {
+      setAdjustedY(Math.max(margin, window.innerHeight - cardHeight - margin));
+    }
+  }, [position]);
 
   // 外側クリックで閉じる
   useEffect(() => {
@@ -121,7 +133,7 @@ function AnnotationHoverCard({
     <div
       ref={cardRef}
       className="annotation-hover-card-unified"
-      style={{ top: position.y, left: position.x }}
+      style={{ top: adjustedY, left: position.x }}
       onClick={(e) => e.stopPropagation()}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -247,21 +259,20 @@ function AnnotationHoverCard({
 
       <style>{`
         .annotation-hover-card-unified {
-          position: absolute;
+          position: fixed;
           width: 320px;
           background-color: var(--bg-secondary);
           border: 1px solid var(--border-color);
           border-radius: 12px;
           box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
           z-index: 1000;
-          transform: translateX(-50%);
           animation: ahcFadeIn 0.15s ease-out;
           overflow: hidden;
         }
 
         @keyframes ahcFadeIn {
-          from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         .ahc-header {

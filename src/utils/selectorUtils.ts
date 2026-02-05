@@ -269,7 +269,16 @@ export function getAnnotationExactText(annotation: AnnotationV2): string {
   const tqs = annotation.target.selectors.find(
     (s): s is TextQuoteSelector => s.type === 'TextQuoteSelector'
   );
-  return tqs?.exact || '';
+  let text = tqs?.exact || '';
+
+  // 数式デリミタを表示用に除去
+  if (text.startsWith('$$') && text.endsWith('$$') && text.length > 4) {
+    text = text.slice(2, -2).trim();
+  } else if (text.startsWith('$') && text.endsWith('$') && text.length > 2) {
+    text = text.slice(1, -1).trim();
+  }
+
+  return text;
 }
 
 /**

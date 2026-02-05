@@ -691,17 +691,19 @@ function MarkdownEditor() {
             clearTimeout(hoverTimeoutRef.current);
           }
           hoverTimeoutRef.current = setTimeout(() => {
+            // ビューポート座標で位置を計算（position: fixed 用）
             const rect = annotationEl.getBoundingClientRect();
-            const containerRect = editorRef.current?.getBoundingClientRect();
-            if (containerRect) {
-              setHoveredAnnotation({
-                annotation,
-                position: {
-                  x: rect.left - containerRect.left + rect.width / 2,
-                  y: rect.bottom - containerRect.top + 8,
-                },
-              });
-            }
+            const cardWidth = 320;
+            let hoverX = rect.left + rect.width / 2 - cardWidth / 2;
+            hoverX = Math.max(8, Math.min(hoverX, window.innerWidth - cardWidth - 8));
+
+            setHoveredAnnotation({
+              annotation,
+              position: {
+                x: hoverX,
+                y: rect.bottom + 8,
+              },
+            });
           }, 200);
           return;
         }
@@ -1181,6 +1183,7 @@ ${styledMd}
           width: 100%;
           background-color: var(--bg-primary);
           min-width: 0;
+          overflow: hidden;
         }
 
         .editor-header {
@@ -1401,12 +1404,12 @@ ${styledMd}
 
         /* フラッシュハイライト */
         .cm-flash-highlight {
-          background-color: var(--accent-color) !important;
-          animation: flash-fade 2s ease-out;
+          background-color: color-mix(in srgb, var(--accent-color) 35%, transparent) !important;
+          animation: flash-fade 2.5s ease-out;
         }
 
         @keyframes flash-fade {
-          0% { background-color: var(--accent-color); }
+          0% { background-color: color-mix(in srgb, var(--accent-color) 35%, transparent); }
           100% { background-color: transparent; }
         }
       `}</style>

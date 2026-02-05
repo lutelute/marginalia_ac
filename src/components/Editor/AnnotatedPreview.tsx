@@ -19,6 +19,36 @@ import AnnotationHoverCard from '../Annotations/AnnotationHoverCard';
 import { setEditorScrollCallback, triggerEditorScroll, triggerScrollSync } from './MarkdownEditor';
 
 // ---------------------------------------------------------------------------
+// Rehype Preserve Positions Plugin
+// ---------------------------------------------------------------------------
+// Runs BEFORE AND AFTER rehypeKatex to save element position info as data attributes.
+// 1回目: KaTeX前にソース位置を保存
+// 2回目: KaTeX後に再適用（KaTeXがプロパティを上書きした場合のリカバリ）
+
+function rehypePreservePositions() {
+  return (tree: any) => {
+    walkHastElements(tree);
+  };
+}
+
+function walkHastElements(node: any) {
+  if (
+    node.type === 'element' &&
+    node.position?.start?.offset != null &&
+    node.position?.end?.offset != null
+  ) {
+    if (!node.properties) node.properties = {};
+    node.properties['data-source-s'] = String(node.position.start.offset);
+    node.properties['data-source-e'] = String(node.position.end.offset);
+  }
+  if (node.children) {
+    for (const child of node.children) {
+      walkHastElements(child);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Rehype Source Map Plugin
 // ---------------------------------------------------------------------------
 // Wraps HAST text nodes in <span data-s="offset" data-e="offset"> to preserve
@@ -62,6 +92,8 @@ function getSourceOffsetFromNode(
   node: Node,
   charOffset: number,
 ): number | null {
+  // [data-s] スパンから正確なソースオフセットを算出
+  // 祖先走査は行わない（コードブロック等で null を返し、呼び出し元のフォールバックに任せる）
   if (node.nodeType === Node.TEXT_NODE) {
     const parent = node.parentElement;
     if (parent?.dataset?.s != null) {
@@ -72,6 +104,79 @@ function getSourceOffsetFromNode(
     const srcStart = parseInt(node.dataset.s, 10);
     return isNaN(srcStart) ? null : srcStart + charOffset;
   }
+  return null;
+}
+
+// コンテナの [data-source-s]/[data-source-e] 範囲を取得
+function getContainerSourceRange(node: Node): { start: number; end: number } | null {
+  let el = node instanceof HTMLElement ? node : node.parentElement;
+  while (el) {
+    if (el.dataset?.sourceS != null && el.dataset?.sourceE != null) {
+      const s = parseInt(el.dataset.sourceS, 10);
+      const e = parseInt(el.dataset.sourceE, 10);
+      if (!isNaN(s) && !isNaN(e)) return { start: s, end: e };
+    }
+    if (el.classList?.contains('annotated-preview-content')) break;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// KaTeX math source detection
+// ---------------------------------------------------------------------------
+// KaTeX の MathML annotation 要素から元の LaTeX ソースを抽出し、
+// マークダウンソース内での位置を特定する。
+// data-source-s/e が KaTeX によって消された場合のフォールバック。
+
+function findMathSourceRange(node: Node, content: string): { start: number; end: number } | null {
+  let el = node instanceof HTMLElement ? node : node.parentElement;
+  if (!el) return null;
+
+  // .katex 祖先を探す
+  const katexEl = el.closest('.katex');
+  if (!katexEl) return null;
+
+  // MathML annotation から元の LaTeX を取得
+  const annotation = katexEl.querySelector('annotation[encoding="application/x-tex"]');
+  if (!annotation?.textContent) return null;
+
+  const latex = annotation.textContent.trim();
+  if (!latex) return null;
+
+  return findLatexInSource(latex, content);
+}
+
+function findLatexInSource(latex: string, content: string): { start: number; end: number } | null {
+  // ブロック数式 $$...$$ を検索
+  const blockRegex = /\$\$([\s\S]*?)\$\$/g;
+  let match;
+  while ((match = blockRegex.exec(content)) !== null) {
+    if (match[1].trim() === latex) {
+      const inner = match[1];
+      const trimOffset = inner.indexOf(inner.trim());
+      const start = match.index + 2 + trimOffset;
+      return { start, end: start + latex.length };
+    }
+  }
+
+  // インライン数式 $...$ を検索
+  const inlineRegex = /(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g;
+  while ((match = inlineRegex.exec(content)) !== null) {
+    if (match[1].trim() === latex) {
+      const inner = match[1];
+      const trimOffset = inner.indexOf(inner.trim());
+      const start = match.index + 1 + trimOffset;
+      return { start, end: start + latex.length };
+    }
+  }
+
+  // 直接検索（最終フォールバック）
+  const idx = content.indexOf(latex);
+  if (idx >= 0) {
+    return { start: idx, end: idx + latex.length };
+  }
+
   return null;
 }
 
@@ -97,6 +202,58 @@ interface SourceSpanInfo {
   textNode: Text;
 }
 
+// ---------------------------------------------------------------------------
+// Text matching helper for code blocks
+// ---------------------------------------------------------------------------
+// Creates a CSS Highlight API Range by finding searchText within an element's
+// text content. Used when [data-s] spans are unavailable (e.g. after rehypeRaw).
+
+function createRangeForTextMatch(el: HTMLElement, searchText: string): Range | null {
+  if (!searchText) return null;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  let fullText = '';
+
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode as Text);
+    fullText += (walker.currentNode as Text).textContent || '';
+  }
+
+  const matchIdx = fullText.indexOf(searchText);
+  if (matchIdx < 0) return null;
+
+  let currentPos = 0;
+  let startNode: Text | null = null;
+  let startOffset = 0;
+  let endNode: Text | null = null;
+  let endOffset = 0;
+
+  for (const node of textNodes) {
+    const nodeLen = node.length;
+    if (!startNode && currentPos + nodeLen > matchIdx) {
+      startNode = node;
+      startOffset = matchIdx - currentPos;
+    }
+    if (startNode && currentPos + nodeLen >= matchIdx + searchText.length) {
+      endNode = node;
+      endOffset = matchIdx + searchText.length - currentPos;
+      break;
+    }
+    currentPos += nodeLen;
+  }
+
+  if (!startNode || !endNode) return null;
+
+  try {
+    const range = document.createRange();
+    range.setStart(startNode, Math.min(startOffset, startNode.length));
+    range.setEnd(endNode, Math.min(endOffset, endNode.length));
+    return range;
+  } catch {
+    return null;
+  }
+}
+
 function usePreviewHighlights(
   containerRef: React.RefObject<HTMLElement | null>,
   annotations: AnnotationV2[],
@@ -115,10 +272,8 @@ function usePreviewHighlights(
 
     clearAllHighlights();
 
-    // Collect all source-mapped spans
+    // Collect all source-mapped spans ([data-s])
     const spanEls = container.querySelectorAll<HTMLElement>('[data-s]');
-    if (spanEls.length === 0) return;
-
     const spanInfos: SourceSpanInfo[] = [];
     for (const el of spanEls) {
       const s = parseInt(el.dataset.s || '', 10);
@@ -129,7 +284,9 @@ function usePreviewHighlights(
       spanInfos.push({ srcStart: s, srcEnd: e, textNode: textNode as Text });
     }
     spanInfos.sort((a, b) => a.srcStart - b.srcStart);
-    if (spanInfos.length === 0) return;
+
+    // Collect container elements with preserved positions ([data-source-s])
+    const containerEls = container.querySelectorAll<HTMLElement>('[data-source-s]');
 
     const rangesByType = new Map<string, Range[]>();
     const selectedRanges: Range[] = [];
@@ -145,6 +302,7 @@ function usePreviewHighlights(
       const { start: annStart, end: annEnd } = anchor;
       const ranges: Range[] = [];
 
+      // --- パス1: [data-s] スパンによる精密ハイライト ---
       for (const si of spanInfos) {
         if (si.srcStart >= annEnd) break;
         if (si.srcEnd <= annStart) continue;
@@ -166,17 +324,46 @@ function usePreviewHighlights(
         }
       }
 
-      if (ranges.length === 0) continue;
-      newRangeMap.set(ann.id, ranges);
+      // --- パス2: [data-s] で見つからない場合、コンテナ内テキストマッチング ---
+      // コードブロック等で rehypeRaw が position を消した場合のフォールバック
+      if (ranges.length === 0) {
+        for (const el of containerEls) {
+          const cS = parseInt(el.dataset.sourceS || '', 10);
+          const cE = parseInt(el.dataset.sourceE || '', 10);
+          if (isNaN(cS) || isNaN(cE)) continue;
+          if (cS >= annEnd || cE <= annStart) continue;
 
-      if (ann.id === selectedAnnotation) {
-        selectedRanges.push(...ranges);
-      } else if (ann.id === hoveredAnnotation) {
-        hoveredRanges.push(...ranges);
-      } else {
-        const key = `annotation-${ann.type}`;
-        if (!rangesByType.has(key)) rangesByType.set(key, []);
-        rangesByType.get(key)!.push(...ranges);
+          // コードブロック (<pre>) の場合: テキストマッチングで精密Range作成
+          if (el.tagName === 'PRE') {
+            const codeEl = el.querySelector('code') || el;
+            const overlapStart = Math.max(annStart, cS);
+            const overlapEnd = Math.min(annEnd, cE);
+            const overlapText = content.slice(overlapStart, overlapEnd);
+
+            let range = createRangeForTextMatch(codeEl as HTMLElement, overlapText);
+            if (!range && overlapText.trim()) {
+              range = createRangeForTextMatch(codeEl as HTMLElement, overlapText.trim());
+            }
+            if (range) {
+              ranges.push(range);
+              break;
+            }
+          }
+        }
+      }
+
+      if (ranges.length > 0) {
+        newRangeMap.set(ann.id, ranges);
+
+        if (ann.id === selectedAnnotation) {
+          selectedRanges.push(...ranges);
+        } else if (ann.id === hoveredAnnotation) {
+          hoveredRanges.push(...ranges);
+        } else {
+          const key = `annotation-${ann.type}`;
+          if (!rangesByType.has(key)) rangesByType.set(key, []);
+          rangesByType.get(key)!.push(...ranges);
+        }
       }
     }
 
@@ -204,7 +391,88 @@ function usePreviewHighlights(
       console.warn('Failed to set CSS highlights:', e);
     }
 
-    return () => clearAllHighlights();
+    // --- パス3: コンテナレベルハイライト ---
+    // CSS Highlight API でカバーできなかった注釈（数式ブロック等）に対し、
+    // 最も内側の [data-source-s] コンテナ要素にデータ属性を付与する
+    const highlightedAnnIds = new Set<string>();
+
+    for (const ann of activeAnns) {
+      if (newRangeMap.has(ann.id)) continue; // CSS Highlight でカバー済み
+
+      const anchor = anchorAnnotation(content, ann);
+      if (!anchor) continue;
+
+      const { start: annStart, end: annEnd } = anchor;
+
+      // 内側のコンテナを優先（querySelectorAll はDOM順なので子が後に来る）
+      // → 逆順に走査して最も内側を見つける
+      for (let i = containerEls.length - 1; i >= 0; i--) {
+        const el = containerEls[i];
+        const cS = parseInt(el.dataset.sourceS || '', 10);
+        const cE = parseInt(el.dataset.sourceE || '', 10);
+        if (isNaN(cS) || isNaN(cE)) continue;
+        if (cS >= annEnd || cE <= annStart) continue;
+
+        // 親コンテナが既にマーク済みならスキップ（内側を優先）
+        if (el.querySelector('[data-annotation-id="' + ann.id + '"]')) continue;
+
+        el.setAttribute('data-annotation-highlight', ann.type);
+        el.setAttribute('data-annotation-id', ann.id);
+        if (ann.id === selectedAnnotation) {
+          el.setAttribute('data-annotation-highlight-selected', '');
+        } else if (ann.id === hoveredAnnotation) {
+          el.setAttribute('data-annotation-highlight-hover', '');
+        }
+        highlightedAnnIds.add(ann.id);
+        break; // 最も内側のコンテナのみにマーク
+      }
+    }
+
+    // --- パス4: KaTeX 数式要素のハイライト ---
+    // data-source-s/e が KaTeX によって消された場合のフォールバック。
+    // MathML annotation から元の LaTeX を抽出し、注釈のソース範囲とマッチさせる。
+    const katexEls = container.querySelectorAll('.katex');
+    for (const ann of activeAnns) {
+      if (newRangeMap.has(ann.id)) continue;
+      if (highlightedAnnIds.has(ann.id)) continue;
+
+      const anchor = anchorAnnotation(content, ann);
+      if (!anchor) continue;
+
+      const exactText = content.slice(anchor.start, anchor.end);
+
+      for (const katexEl of katexEls) {
+        const annotation = katexEl.querySelector('annotation[encoding="application/x-tex"]');
+        if (!annotation?.textContent) continue;
+        const latex = annotation.textContent.trim();
+
+        if (latex === exactText || latex.includes(exactText) || exactText.includes(latex)) {
+          // KaTeX の親コンテナ（.katex-display or math span）にハイライトを適用
+          const mathContainer = (katexEl.closest('.katex-display') || katexEl.parentElement || katexEl) as HTMLElement;
+          mathContainer.setAttribute('data-annotation-highlight', ann.type);
+          mathContainer.setAttribute('data-annotation-id', ann.id);
+          if (ann.id === selectedAnnotation) {
+            mathContainer.setAttribute('data-annotation-highlight-selected', '');
+          } else if (ann.id === hoveredAnnotation) {
+            mathContainer.setAttribute('data-annotation-highlight-hover', '');
+          }
+          highlightedAnnIds.add(ann.id);
+          break;
+        }
+      }
+    }
+
+    return () => {
+      clearAllHighlights();
+      // コンテナレベルハイライトの除去
+      const highlighted = container.querySelectorAll<HTMLElement>('[data-annotation-highlight]');
+      for (const el of highlighted) {
+        el.removeAttribute('data-annotation-highlight');
+        el.removeAttribute('data-annotation-id');
+        el.removeAttribute('data-annotation-highlight-selected');
+        el.removeAttribute('data-annotation-highlight-hover');
+      }
+    };
   }, [containerRef, annotations, content, selectedAnnotation, hoveredAnnotation]);
 
   return rangeMapRef;
@@ -440,6 +708,10 @@ export default function AnnotatedPreview() {
               }
 
               // ホバーカード表示（200ms 遅延）
+              // マウス位置をキャプチャ（setTimeout内で使うため）
+              const hoverMouseX = e.clientX;
+              const hoverMouseY = e.clientY;
+
               if (hoverTimeoutRef.current) {
                 clearTimeout(hoverTimeoutRef.current);
               }
@@ -447,20 +719,16 @@ export default function AnnotatedPreview() {
                 const ann = annotations.find((a) => a.id === id);
                 if (!ann) return;
 
-                const contentEl = contentRef.current;
-                const scrollContainer = scrollContainerRef.current;
-                if (!contentEl || !scrollContainer) return;
-
-                // Range の getBoundingClientRect で位置を計算
-                const rect = range.getBoundingClientRect();
-                const containerRect = contentEl.getBoundingClientRect();
-                const scrollTop = scrollContainer.scrollTop;
+                // マウス位置ベースで配置（ハイライト下端だと遠くなる場合がある）
+                const cardWidth = 320;
+                let hoverX = hoverMouseX - cardWidth / 2;
+                hoverX = Math.max(8, Math.min(hoverX, window.innerWidth - cardWidth - 8));
 
                 setHoverCardData({
                   annotation: ann,
                   position: {
-                    x: rect.left - containerRect.left + rect.width / 2,
-                    y: rect.bottom - containerRect.top + scrollTop + 8,
+                    x: hoverX,
+                    y: hoverMouseY + 16,
                   },
                 });
               }, 200);
@@ -468,6 +736,46 @@ export default function AnnotatedPreview() {
               return;
             }
           }
+        }
+
+        // フォールバック: コンテナレベルハイライト([data-annotation-id])の検知
+        const targetEl = e.target as HTMLElement;
+        const containerHighlight = targetEl.closest('[data-annotation-id]') as HTMLElement | null;
+        if (containerHighlight) {
+          const id = containerHighlight.getAttribute('data-annotation-id')!;
+          if (hoveredAnnotation !== id) setHoveredAnnotation(id);
+
+          if (closeTimeoutRef.current) {
+            clearTimeout(closeTimeoutRef.current);
+            closeTimeoutRef.current = null;
+          }
+
+          // マウス位置をキャプチャ（setTimeout内で使うため）
+          const mouseX = e.clientX;
+          const mouseY = e.clientY;
+
+          if (hoverTimeoutRef.current) {
+            clearTimeout(hoverTimeoutRef.current);
+          }
+          hoverTimeoutRef.current = setTimeout(() => {
+            const ann = annotations.find((a) => a.id === id);
+            if (!ann) return;
+
+            // ビューポート座標で位置を計算（position: fixed 用）
+            const cardWidth = 320;
+            let hoverX2 = mouseX - cardWidth / 2;
+            hoverX2 = Math.max(8, Math.min(hoverX2, window.innerWidth - cardWidth - 8));
+
+            setHoverCardData({
+              annotation: ann,
+              position: {
+                x: hoverX2,
+                y: mouseY + 12,
+              },
+            });
+          }, 200);
+
+          return;
         }
 
         // 注釈外
@@ -519,7 +827,23 @@ export default function AnnotatedPreview() {
           }
         }
 
-        // 2. 一般テキストクリック → エディタジャンプ（フラッシュ付き）
+        // 2. コンテナレベルハイライト上のクリック
+        const targetEl = e.target as HTMLElement;
+        const containerHighlight = targetEl.closest('[data-annotation-id]') as HTMLElement | null;
+        if (containerHighlight) {
+          const id = containerHighlight.getAttribute('data-annotation-id')!;
+          selectAnnotation(id);
+          const ann = annotations.find((a) => a.id === id);
+          if (ann) {
+            const editorPos = getEditorPosition(ann);
+            if (editorPos) {
+              scrollToEditorLine(editorPos.startLine, id);
+            }
+          }
+          return;
+        }
+
+        // 3. 一般テキストクリック → エディタジャンプ（フラッシュ付き）
         const sourceOffset = getSourceOffsetFromNode(caretRange.startContainer, caretRange.startOffset);
         if (sourceOffset != null && content) {
           const pos = computeEditorPositionFromOffset(content, sourceOffset, sourceOffset);
@@ -551,8 +875,58 @@ export default function AnnotatedPreview() {
     if (!text || text.length < 2) return;
 
     // Compute source offsets from data-s spans
-    const srcStart = getSourceOffsetFromNode(range.startContainer, range.startOffset);
-    const srcEnd = getSourceOffsetFromNode(range.endContainer, range.endOffset);
+    let srcStart = getSourceOffsetFromNode(range.startContainer, range.startOffset);
+    let srcEnd = getSourceOffsetFromNode(range.endContainer, range.endOffset);
+
+    // 両方 null の場合のみコンテナ範囲で解決を試みる
+    // （コードブロック・数式ブロック等、[data-s] スパンが存在しない領域）
+    if (srcStart == null && srcEnd == null) {
+      const containerRange = getContainerSourceRange(range.commonAncestorContainer);
+      if (containerRange) {
+        // コードブロック: レンダリングテキスト＝ソースなので indexOf で精密マッチ
+        const idx = content.indexOf(text, containerRange.start);
+        if (idx >= 0 && idx + text.length <= containerRange.end) {
+          srcStart = idx;
+          srcEnd = idx + text.length;
+        } else {
+          // 数式ブロック: レンダリング結果≠ソース → デリミタを除去してLaTeX本体のみを注釈対象にする
+          let mathStart = containerRange.start;
+          let mathEnd = containerRange.end;
+          const raw = content.slice(mathStart, mathEnd);
+
+          if (raw.startsWith('$$') && raw.endsWith('$$')) {
+            mathStart += 2;
+            mathEnd -= 2;
+            // $$直後の改行・空白を除去
+            while (mathStart < mathEnd && /[\s\n]/.test(content[mathStart])) mathStart++;
+            while (mathEnd > mathStart && /[\s\n]/.test(content[mathEnd - 1])) mathEnd--;
+          } else if (raw.startsWith('$') && raw.endsWith('$')) {
+            mathStart += 1;
+            mathEnd -= 1;
+            while (mathStart < mathEnd && content[mathStart] === ' ') mathStart++;
+            while (mathEnd > mathStart && content[mathEnd - 1] === ' ') mathEnd--;
+          }
+
+          // 安全ガード: 除去後に空なら元の範囲を使用
+          if (mathStart >= mathEnd) {
+            srcStart = containerRange.start;
+            srcEnd = containerRange.end;
+          } else {
+            srcStart = mathStart;
+            srcEnd = mathEnd;
+          }
+        }
+      } else {
+        // フォールバック: KaTeX 数式の DOM ベース検出
+        // data-source-s/e が KaTeX により消された場合でも、
+        // MathML annotation から元の LaTeX を抽出してソース位置を特定する
+        const mathRange = findMathSourceRange(range.commonAncestorContainer, content);
+        if (mathRange) {
+          srcStart = mathRange.start;
+          srcEnd = mathRange.end;
+        }
+      }
+    }
 
     const rect = range.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
@@ -565,7 +939,7 @@ export default function AnnotatedPreview() {
       srcStart,
       srcEnd,
     });
-  }, []);
+  }, [content]);
 
   // Dismiss popup on click outside
   useEffect(() => {
@@ -826,7 +1200,7 @@ export default function AnnotatedPreview() {
         >
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeRaw, rehypeKatex, rehypeSourceMap]}
+            rehypePlugins={[rehypeRaw, rehypePreservePositions, rehypeKatex, rehypePreservePositions, rehypeSourceMap]}
           >
             {content}
           </ReactMarkdown>
@@ -890,6 +1264,7 @@ export default function AnnotatedPreview() {
           width: 100%;
           min-width: 0;
           background: var(--bg-primary);
+          position: relative;
         }
 
         .annotated-preview-header {
@@ -953,6 +1328,229 @@ export default function AnnotatedPreview() {
           background-color: color-mix(in srgb, var(--accent-color) 25%, transparent);
         }
 
+        /* Container-level highlights for math blocks, etc. */
+        [data-annotation-highlight] {
+          border-radius: 4px;
+          padding: 2px 4px;
+          transition: background-color 0.15s, box-shadow 0.15s;
+        }
+        [data-annotation-highlight="comment"] {
+          background-color: color-mix(in srgb, var(--comment-color) 15%, transparent);
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--comment-color) 40%, transparent);
+        }
+        [data-annotation-highlight="review"] {
+          background-color: color-mix(in srgb, var(--review-color) 15%, transparent);
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--review-color) 40%, transparent);
+        }
+        [data-annotation-highlight="pending"] {
+          background-color: color-mix(in srgb, var(--pending-color) 15%, transparent);
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--pending-color) 40%, transparent);
+        }
+        [data-annotation-highlight="discussion"] {
+          background-color: color-mix(in srgb, var(--discussion-color) 15%, transparent);
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--discussion-color) 40%, transparent);
+        }
+        [data-annotation-highlight-selected] {
+          background-color: color-mix(in srgb, var(--accent-color) 20%, transparent);
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color) 60%, transparent);
+        }
+        [data-annotation-highlight-hover] {
+          background-color: color-mix(in srgb, var(--accent-color) 15%, transparent);
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color) 40%, transparent);
+        }
+
+        /* ======= Markdown element styles ======= */
+
+        /* --- Headings --- */
+        .annotated-preview-content h1 {
+          font-size: 1.8em;
+          font-weight: 700;
+          margin: 1.4em 0 0.6em;
+          padding-bottom: 0.3em;
+          border-bottom: 1px solid var(--border-color);
+          color: var(--text-primary);
+        }
+        .annotated-preview-content h2 {
+          font-size: 1.45em;
+          font-weight: 700;
+          margin: 1.2em 0 0.5em;
+          padding-bottom: 0.25em;
+          border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+          color: var(--text-primary);
+        }
+        .annotated-preview-content h3 {
+          font-size: 1.2em;
+          font-weight: 600;
+          margin: 1em 0 0.4em;
+          color: var(--text-primary);
+        }
+        .annotated-preview-content h4,
+        .annotated-preview-content h5,
+        .annotated-preview-content h6 {
+          font-size: 1em;
+          font-weight: 600;
+          margin: 0.8em 0 0.3em;
+          color: var(--text-secondary);
+        }
+
+        /* --- Paragraphs --- */
+        .annotated-preview-content p {
+          margin: 0.6em 0;
+        }
+
+        /* --- Links --- */
+        .annotated-preview-content a {
+          color: var(--accent-color);
+          text-decoration: none;
+        }
+        .annotated-preview-content a:hover {
+          text-decoration: underline;
+        }
+
+        /* --- Inline code --- */
+        .annotated-preview-content code:not(pre code) {
+          background-color: var(--bg-tertiary);
+          border: 1px solid var(--border-color);
+          border-radius: 4px;
+          padding: 0.15em 0.4em;
+          font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace;
+          font-size: 0.88em;
+          color: color-mix(in srgb, var(--accent-color) 80%, var(--text-primary));
+        }
+
+        /* --- Code blocks --- */
+        .annotated-preview-content pre {
+          background-color: var(--bg-tertiary);
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          padding: 16px 20px;
+          margin: 1em 0;
+          overflow-x: auto;
+          font-size: 0.88em;
+          line-height: 1.55;
+        }
+        .annotated-preview-content pre code {
+          background: none;
+          border: none;
+          padding: 0;
+          font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace;
+          font-size: inherit;
+          color: var(--text-primary);
+        }
+
+        /* --- Blockquotes --- */
+        .annotated-preview-content blockquote {
+          margin: 1em 0;
+          padding: 0.6em 1em;
+          border-left: 4px solid var(--accent-color);
+          background-color: color-mix(in srgb, var(--accent-color) 6%, transparent);
+          border-radius: 0 6px 6px 0;
+          color: var(--text-secondary);
+        }
+        .annotated-preview-content blockquote p {
+          margin: 0.3em 0;
+        }
+
+        /* --- Tables --- */
+        .annotated-preview-content table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 1em 0;
+          font-size: 0.92em;
+          border: 1px solid var(--border-color);
+          border-radius: 6px;
+          overflow: hidden;
+        }
+        .annotated-preview-content thead th {
+          background-color: var(--bg-tertiary);
+          font-weight: 600;
+          text-align: left;
+          padding: 10px 14px;
+          border-bottom: 2px solid var(--border-color);
+          color: var(--text-primary);
+        }
+        .annotated-preview-content tbody td {
+          padding: 8px 14px;
+          border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+          color: var(--text-primary);
+        }
+        .annotated-preview-content tbody tr:last-child td {
+          border-bottom: none;
+        }
+        .annotated-preview-content tbody tr:hover {
+          background-color: color-mix(in srgb, var(--accent-color) 4%, transparent);
+        }
+
+        /* --- Horizontal rules --- */
+        .annotated-preview-content hr {
+          border: none;
+          border-top: 1px solid var(--border-color);
+          margin: 2em 0;
+        }
+
+        /* --- Lists --- */
+        .annotated-preview-content ul,
+        .annotated-preview-content ol {
+          margin: 0.6em 0;
+          padding-left: 1.8em;
+        }
+        .annotated-preview-content li {
+          margin: 0.25em 0;
+        }
+        .annotated-preview-content li > p {
+          margin: 0.2em 0;
+        }
+
+        /* Task lists (GFM) */
+        .annotated-preview-content ul.contains-task-list {
+          list-style: none;
+          padding-left: 0.5em;
+        }
+        .annotated-preview-content .task-list-item {
+          display: flex;
+          align-items: baseline;
+          gap: 0.5em;
+        }
+        .annotated-preview-content .task-list-item input[type="checkbox"] {
+          accent-color: var(--accent-color);
+          margin: 0;
+        }
+
+        /* --- Images --- */
+        .annotated-preview-content img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 6px;
+          margin: 0.8em 0;
+        }
+
+        /* --- Math (KaTeX) --- */
+        .annotated-preview-content .katex-display {
+          margin: 1em 0;
+          padding: 12px 16px;
+          background-color: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+          border-radius: 8px;
+          overflow-x: auto;
+        }
+        .annotated-preview-content .katex {
+          font-size: 1.1em;
+        }
+
+        /* --- Strong / Em --- */
+        .annotated-preview-content strong {
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+        .annotated-preview-content em {
+          font-style: italic;
+        }
+
+        /* --- Strikethrough --- */
+        .annotated-preview-content del {
+          color: var(--text-muted);
+          text-decoration: line-through;
+        }
+
         .ta-selection-popup {
           display: flex;
           gap: 4px;
@@ -986,24 +1584,26 @@ export default function AnnotatedPreview() {
         }
 
         .ta-form-overlay {
-          position: fixed;
+          position: absolute;
           top: 0;
           left: 0;
           right: 0;
           bottom: 0;
-          background: rgba(0,0,0,0.5);
+          background: rgba(0,0,0,0.3);
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: center;
-          z-index: 1000;
+          padding-top: 60px;
+          z-index: 200;
         }
 
         .ta-form {
           background: var(--bg-secondary);
           padding: 20px;
           border-radius: 8px;
-          width: 400px;
+          width: 360px;
           max-width: 90%;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         }
 
         .ta-form-header {

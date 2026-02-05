@@ -1,21 +1,64 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useFile } from './FileContext';
-import { Annotation, AnnotationStatus } from '../types';
+import {
+  AnnotationV2,
+  AnnotationStatus,
+  AnnotationType,
+  AnnotationReply,
+  AnnotationSelector,
+  AnnotationTarget,
+  HistoryEntryV2,
+  MarginaliaFileV2,
+  PendingSelectionV2,
+  TextQuoteSelector,
+} from '../types/annotations';
+import { migrateFile, needsMigration as checkNeedsMigration } from '../utils/migration';
+import { anchorAnnotation, getAnnotationExactText, createAnnotationTarget } from '../utils/selectorUtils';
 
-const AnnotationContext = createContext(null);
+// --- State ---
 
-const initialState = {
-  annotations: [] as Annotation[],
+interface AnnotationState {
+  annotations: AnnotationV2[];
+  history: HistoryEntryV2[];
+  selectedAnnotation: string | null;
+  isLoading: boolean;
+  pendingSelection: PendingSelectionV2 | null;
+  scrollToLine: { line: number; annotationId: string } | null;
+  documentText: string;
+}
+
+const initialState: AnnotationState = {
+  annotations: [],
   history: [],
   selectedAnnotation: null,
   isLoading: false,
-  pendingSelection: null, // テキスト選択時の一時データ
-  scrollToLine: null as { line: number; annotationId: string } | null, // エディタへのジャンプ用
-  documentText: '', // 現在のドキュメントテキスト（孤立検出用）
+  pendingSelection: null,
+  scrollToLine: null,
+  documentText: '',
 };
 
-function annotationReducer(state, action) {
+// --- Actions ---
+
+type AnnotationAction =
+  | { type: 'LOAD_DATA'; payload: { annotations: AnnotationV2[]; history: HistoryEntryV2[] } }
+  | { type: 'ADD_ANNOTATION'; payload: AnnotationV2 }
+  | { type: 'UPDATE_ANNOTATION'; payload: { id: string } & Partial<AnnotationV2> }
+  | { type: 'DELETE_ANNOTATION'; payload: string }
+  | { type: 'SELECT_ANNOTATION'; payload: string | null }
+  | { type: 'SET_PENDING_SELECTION'; payload: PendingSelectionV2 | null }
+  | { type: 'ADD_HISTORY'; payload: HistoryEntryV2 }
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'CLEAR' }
+  | { type: 'SET_SCROLL_TO_LINE'; payload: { line: number; annotationId: string } | null }
+  | { type: 'SET_DOCUMENT_TEXT'; payload: string }
+  | { type: 'UPDATE_ANNOTATION_STATUS'; payload: { id: string; status: AnnotationStatus } }
+  | { type: 'BULK_UPDATE_STATUS'; payload: { ids: string[]; status: AnnotationStatus } }
+  | { type: 'REASSIGN_ANNOTATION'; payload: { id: string; newSelectors: AnnotationSelector[] } };
+
+// --- Reducer ---
+
+function annotationReducer(state: AnnotationState, action: AnnotationAction): AnnotationState {
   switch (action.type) {
     case 'LOAD_DATA':
       return {
@@ -63,7 +106,7 @@ function annotationReducer(state, action) {
     case 'ADD_HISTORY':
       return {
         ...state,
-        history: [action.payload, ...state.history].slice(0, 100), // 最新100件を保持
+        history: [action.payload, ...state.history].slice(0, 100),
       };
 
     case 'SET_LOADING':
@@ -73,9 +116,7 @@ function annotationReducer(state, action) {
       };
 
     case 'CLEAR':
-      return {
-        ...initialState,
-      };
+      return { ...initialState };
 
     case 'SET_SCROLL_TO_LINE':
       return {
@@ -93,7 +134,13 @@ function annotationReducer(state, action) {
       return {
         ...state,
         annotations: state.annotations.map((a) =>
-          a.id === action.payload.id ? { ...a, status: action.payload.status } : a
+          a.id === action.payload.id
+            ? {
+                ...a,
+                status: action.payload.status,
+                resolvedAt: action.payload.status === 'resolved' ? new Date().toISOString() : a.resolvedAt,
+              }
+            : a
         ),
       };
 
@@ -112,8 +159,7 @@ function annotationReducer(state, action) {
           a.id === action.payload.id
             ? {
                 ...a,
-                selectedText: action.payload.newText,
-                occurrenceIndex: action.payload.occurrenceIndex ?? 0,
+                target: { ...a.target, selectors: action.payload.newSelectors },
                 status: 'active' as AnnotationStatus,
               }
             : a
@@ -125,9 +171,13 @@ function annotationReducer(state, action) {
   }
 }
 
-export function AnnotationProvider({ children }) {
+// --- Context ---
+
+const AnnotationContext = createContext<any>(null);
+
+export function AnnotationProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(annotationReducer, initialState);
-  const { currentFile } = useFile();
+  const { currentFile, content } = useFile();
 
   // ファイル変更時にMarginaliaデータをロード
   useEffect(() => {
@@ -140,22 +190,40 @@ export function AnnotationProvider({ children }) {
       dispatch({ type: 'SET_LOADING', payload: true });
       const result = await window.electronAPI.readMarginalia(currentFile);
       if (result.success) {
-        dispatch({ type: 'LOAD_DATA', payload: result.data });
+        if (result.needsMigration) {
+          // V1→V2マイグレーション
+          const v2Data = migrateFile(result.data, content || undefined);
+          dispatch({
+            type: 'LOAD_DATA',
+            payload: {
+              annotations: v2Data.annotations,
+              history: v2Data.history,
+            },
+          });
+        } else {
+          dispatch({
+            type: 'LOAD_DATA',
+            payload: {
+              annotations: result.data.annotations || [],
+              history: result.data.history || [],
+            },
+          });
+        }
       }
     };
 
     loadData();
   }, [currentFile]);
 
-  // データ変更時に自動保存
+  // データ変更時に自動保存（V2形式）
   const saveMarginalia = useCallback(async () => {
     if (!currentFile) return;
 
-    const data = {
+    const data: MarginaliaFileV2 = {
       _tool: 'marginalia',
-      _version: '1.0.0',
+      _version: '2.0.0',
       filePath: currentFile,
-      fileName: currentFile.split('/').pop(),
+      fileName: currentFile.split('/').pop() || '',
       lastModified: new Date().toISOString(),
       annotations: state.annotations,
       history: state.history,
@@ -171,79 +239,92 @@ export function AnnotationProvider({ children }) {
     }
   }, [state.annotations, state.history, currentFile, state.isLoading, saveMarginalia]);
 
-  const addAnnotation = useCallback((type, content, selection) => {
-    const annotation = {
-      id: uuidv4(),
-      type, // 'comment' | 'review' | 'pending' | 'discussion'
-      startLine: selection.startLine,
-      endLine: selection.endLine,
-      startChar: selection.startChar,
-      endChar: selection.endChar,
-      selectedText: selection.text,
-      // 同一テキストの何番目の出現か（0始まり）
-      occurrenceIndex: selection.occurrenceIndex ?? 0,
-      blockId: selection.blockId || null, // ブロック要素へのジャンプ用ID
-      content,
-      author: 'user',
-      createdAt: new Date().toISOString(),
-      resolved: false,
-      replies: [],
-    };
+  // --- Actions ---
 
-    dispatch({ type: 'ADD_ANNOTATION', payload: annotation });
+  const addAnnotation = useCallback(
+    (type: AnnotationType, content: string, selection: PendingSelectionV2 & { text?: string }) => {
+      const now = new Date().toISOString();
+      const target: AnnotationTarget = {
+        source: currentFile || '',
+        selectors: selection.selectors || [],
+      };
 
-    // 履歴に追加
-    dispatch({
-      type: 'ADD_HISTORY',
-      payload: {
+      const annotation: AnnotationV2 = {
         id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        action: type,
-        summary: `${type}を追加: "${selection.text.slice(0, 30)}..."`,
-      },
+        type,
+        target,
+        content,
+        author: 'user',
+        createdAt: now,
+        status: 'active',
+        replies: [],
+        blockId: selection.blockId || undefined,
+      };
+
+      dispatch({ type: 'ADD_ANNOTATION', payload: annotation });
+
+      // 履歴に追加
+      const selectedText = selection.text || getAnnotationExactText(annotation);
+      dispatch({
+        type: 'ADD_HISTORY',
+        payload: {
+          id: uuidv4(),
+          timestamp: now,
+          action: type,
+          summary: `${type}を追加: "${selectedText.slice(0, 30)}..."`,
+          annotationId: annotation.id,
+        },
+      });
+    },
+    [currentFile]
+  );
+
+  const updateAnnotation = useCallback((id: string, updates: Partial<AnnotationV2>) => {
+    dispatch({
+      type: 'UPDATE_ANNOTATION',
+      payload: { id, ...updates, updatedAt: new Date().toISOString() },
     });
   }, []);
 
-  const updateAnnotation = useCallback((id, updates) => {
-    dispatch({ type: 'UPDATE_ANNOTATION', payload: { id, ...updates } });
-  }, []);
-
-  const deleteAnnotation = useCallback((id) => {
+  const deleteAnnotation = useCallback((id: string) => {
     dispatch({ type: 'DELETE_ANNOTATION', payload: id });
   }, []);
 
-  const selectAnnotation = useCallback((id) => {
+  const selectAnnotation = useCallback((id: string | null) => {
     dispatch({ type: 'SELECT_ANNOTATION', payload: id });
   }, []);
 
-  const setPendingSelection = useCallback((selection) => {
+  const setPendingSelection = useCallback((selection: PendingSelectionV2 | null) => {
     dispatch({ type: 'SET_PENDING_SELECTION', payload: selection });
   }, []);
 
-  const addReply = useCallback((annotationId, content) => {
-    const reply = {
-      id: uuidv4(),
-      content,
-      author: 'user',
-      createdAt: new Date().toISOString(),
-    };
+  const addReply = useCallback(
+    (annotationId: string, replyContent: string) => {
+      const reply: AnnotationReply = {
+        id: uuidv4(),
+        content: replyContent,
+        author: 'user',
+        createdAt: new Date().toISOString(),
+      };
 
-    dispatch({
-      type: 'UPDATE_ANNOTATION',
-      payload: {
-        id: annotationId,
-        replies: [
-          ...(state.annotations.find((a) => a.id === annotationId)?.replies || []),
-          reply,
-        ],
-      },
-    });
-  }, [state.annotations]);
+      const annotation = state.annotations.find((a) => a.id === annotationId);
+      if (annotation) {
+        dispatch({
+          type: 'UPDATE_ANNOTATION',
+          payload: {
+            id: annotationId,
+            replies: [...annotation.replies, reply],
+          },
+        });
+      }
+    },
+    [state.annotations]
+  );
 
-  const resolveAnnotation = useCallback((id, resolved = true) => {
+  const resolveAnnotation = useCallback((id: string, resolved: boolean = true) => {
     dispatch({
-      type: 'UPDATE_ANNOTATION',
-      payload: { id, resolved },
+      type: 'UPDATE_ANNOTATION_STATUS',
+      payload: { id, status: resolved ? 'resolved' : 'active' },
     });
   }, []);
 
@@ -261,103 +342,147 @@ export function AnnotationProvider({ children }) {
     });
   }, []);
 
-  // ドキュメントテキストを更新（孤立検出用）
   const setDocumentText = useCallback((text: string) => {
     dispatch({ type: 'SET_DOCUMENT_TEXT', payload: text });
   }, []);
 
-  // 注釈のステータスを変更
   const setAnnotationStatus = useCallback((id: string, status: AnnotationStatus) => {
     dispatch({ type: 'UPDATE_ANNOTATION_STATUS', payload: { id, status } });
   }, []);
 
-  // 注釈を保持（kept状態に）
-  const keepAnnotation = useCallback((id: string) => {
-    setAnnotationStatus(id, 'kept');
-  }, [setAnnotationStatus]);
+  const keepAnnotation = useCallback(
+    (id: string) => {
+      setAnnotationStatus(id, 'kept');
+    },
+    [setAnnotationStatus]
+  );
 
-  // 注釈を再割当
-  const reassignAnnotation = useCallback((id: string, newText: string, occurrenceIndex?: number) => {
-    dispatch({
-      type: 'REASSIGN_ANNOTATION',
-      payload: { id, newText, occurrenceIndex },
-    });
-  }, []);
+  const reassignAnnotation = useCallback(
+    (id: string, newText: string, occurrenceIndex?: number) => {
+      // ドキュメントテキストから新しいセレクタを生成
+      const docText = state.documentText || content || '';
+      const newSelectors: AnnotationSelector[] = [];
 
-  // 孤立注釈を検出
-  const detectOrphanedAnnotations = useCallback((documentText: string) => {
-    if (!documentText || state.annotations.length === 0) return [];
+      if (docText && newText) {
+        let count = 0;
+        let searchFrom = 0;
+        const targetOcc = occurrenceIndex ?? 0;
+        let foundPos = -1;
 
-    const orphaned: string[] = [];
-    const reactivated: string[] = [];
+        while (true) {
+          const pos = docText.indexOf(newText, searchFrom);
+          if (pos === -1) break;
+          if (count === targetOcc) {
+            foundPos = pos;
+            break;
+          }
+          count++;
+          searchFrom = pos + 1;
+        }
 
-    state.annotations.forEach((annotation) => {
-      // 既にkept状態の注釈はスキップ
-      if (annotation.status === 'kept') return;
-      // 解決済みはスキップ
-      if (annotation.resolved) return;
-      // ブロック注釈は別処理（今回はスキップ）
-      if (annotation.blockId) return;
+        if (foundPos >= 0) {
+          const prefix = docText.slice(Math.max(0, foundPos - 50), foundPos);
+          const suffix = docText.slice(foundPos + newText.length, foundPos + newText.length + 50);
 
-      const searchText = annotation.selectedText;
-      if (!searchText) return;
-
-      // テキストの出現回数をカウント
-      let count = 0;
-      let index = 0;
-      while ((index = documentText.indexOf(searchText, index)) !== -1) {
-        count++;
-        index += 1;
-      }
-
-      const targetOccurrence = annotation.occurrenceIndex ?? 0;
-
-      // 出現回数が足りない場合は孤立
-      if (count <= targetOccurrence) {
-        // まだorphanedでない場合のみ追加
-        if (annotation.status !== 'orphaned') {
-          orphaned.push(annotation.id);
+          newSelectors.push({
+            type: 'TextQuoteSelector',
+            exact: newText,
+            prefix: prefix || undefined,
+            suffix: suffix || undefined,
+          });
+          newSelectors.push({
+            type: 'TextPositionSelector',
+            start: foundPos,
+            end: foundPos + newText.length,
+          });
+        } else {
+          // テキストが見つからなくてもTextQuoteSelectorは設定
+          newSelectors.push({
+            type: 'TextQuoteSelector',
+            exact: newText,
+          });
         }
       } else {
-        // テキストが見つかった場合、orphanedからactiveに戻す
-        if (annotation.status === 'orphaned') {
-          reactivated.push(annotation.id);
-        }
+        newSelectors.push({
+          type: 'TextQuoteSelector',
+          exact: newText,
+        });
       }
-    });
 
-    // 孤立注釈のステータスを更新
-    if (orphaned.length > 0) {
       dispatch({
-        type: 'BULK_UPDATE_STATUS',
-        payload: { ids: orphaned, status: 'orphaned' as AnnotationStatus },
+        type: 'REASSIGN_ANNOTATION',
+        payload: { id, newSelectors },
       });
-    }
+    },
+    [state.documentText, content]
+  );
 
-    // 再アクティブ化
-    if (reactivated.length > 0) {
-      dispatch({
-        type: 'BULK_UPDATE_STATUS',
-        payload: { ids: reactivated, status: 'active' as AnnotationStatus },
+  // 孤立注釈を検出
+  const detectOrphanedAnnotations = useCallback(
+    (documentText: string) => {
+      if (!documentText || state.annotations.length === 0) return [];
+
+      const orphaned: string[] = [];
+      const reactivated: string[] = [];
+
+      state.annotations.forEach((annotation) => {
+        // kept/resolved/archivedはスキップ
+        if (annotation.status === 'kept') return;
+        if (annotation.status === 'resolved') return;
+        if (annotation.status === 'archived') return;
+        // ブロック注釈は別処理
+        if (annotation.blockId) return;
+
+        const result = anchorAnnotation(documentText, annotation);
+
+        if (!result) {
+          // アンカー失敗 → orphaned
+          if (annotation.status !== 'orphaned') {
+            orphaned.push(annotation.id);
+          }
+        } else {
+          // アンカー成功 → orphanedから復帰
+          if (annotation.status === 'orphaned') {
+            reactivated.push(annotation.id);
+          }
+        }
       });
-    }
 
-    return orphaned;
-  }, [state.annotations]);
+      if (orphaned.length > 0) {
+        dispatch({
+          type: 'BULK_UPDATE_STATUS',
+          payload: { ids: orphaned, status: 'orphaned' },
+        });
+      }
 
-  // 孤立注釈のリスト
+      if (reactivated.length > 0) {
+        dispatch({
+          type: 'BULK_UPDATE_STATUS',
+          payload: { ids: reactivated, status: 'active' },
+        });
+      }
+
+      return orphaned;
+    },
+    [state.annotations]
+  );
+
+  // --- Memoized Selectors ---
+
   const orphanedAnnotations = useMemo(() => {
     return state.annotations.filter((a) => a.status === 'orphaned');
   }, [state.annotations]);
 
-  // 保持された注釈のリスト
   const keptAnnotations = useMemo(() => {
     return state.annotations.filter((a) => a.status === 'kept');
   }, [state.annotations]);
 
-  // アクティブな注釈のリスト
   const activeAnnotations = useMemo(() => {
-    return state.annotations.filter((a) => !a.status || a.status === 'active');
+    return state.annotations.filter((a) => a.status === 'active');
+  }, [state.annotations]);
+
+  const resolvedAnnotations = useMemo(() => {
+    return state.annotations.filter((a) => a.status === 'resolved');
   }, [state.annotations]);
 
   const value = {
@@ -371,7 +496,6 @@ export function AnnotationProvider({ children }) {
     resolveAnnotation,
     scrollToEditorLine,
     clearScrollToLine,
-    // 孤立注釈管理
     setDocumentText,
     setAnnotationStatus,
     keepAnnotation,
@@ -380,6 +504,7 @@ export function AnnotationProvider({ children }) {
     orphanedAnnotations,
     keptAnnotations,
     activeAnnotations,
+    resolvedAnnotations,
   };
 
   return (

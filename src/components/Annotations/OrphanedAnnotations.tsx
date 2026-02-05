@@ -2,13 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { useAnnotation } from '../../contexts/AnnotationContext';
 import { useFile } from '../../contexts/FileContext';
 import { OrphanedFileData } from '../../types';
-
-const ANNOTATION_TYPES = [
-  { id: 'comment', label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
-  { id: 'review', label: '校閲', icon: '✏️', color: 'var(--review-color)' },
-  { id: 'pending', label: '保留', icon: '⏳', color: 'var(--pending-color)' },
-  { id: 'discussion', label: '議論', icon: '💭', color: 'var(--discussion-color)' },
-];
+import { getAnnotationExactText } from '../../utils/selectorUtils';
+import { getTypeConfig } from '../../constants/annotationTypes';
 
 function OrphanedAnnotations() {
   const {
@@ -118,7 +113,8 @@ function OrphanedAnnotations() {
           </div>
           <div className="orphaned-list">
             {orphanedAnnotations.map((annotation) => {
-              const typeInfo = ANNOTATION_TYPES.find((t) => t.id === annotation.type);
+              const typeInfo = getTypeConfig(annotation.type);
+              const orphanedText = getAnnotationExactText(annotation);
               const isReassigning = reassignMode === annotation.id;
 
               return (
@@ -126,15 +122,15 @@ function OrphanedAnnotations() {
                   <div className="item-header">
                     <span
                       className="item-type"
-                      style={{ backgroundColor: typeInfo?.color }}
+                      style={{ backgroundColor: typeInfo.cssVar }}
                     >
-                      {typeInfo?.icon} {typeInfo?.label}
+                      {typeInfo.icon} {typeInfo.label}
                     </span>
                   </div>
 
                   <div className="item-text">
                     <span className="text-label">元のテキスト:</span>
-                    <span className="text-content">"{annotation.selectedText}"</span>
+                    <span className="text-content">"{orphanedText}"</span>
                   </div>
 
                   <div className="item-content">
@@ -176,7 +172,7 @@ function OrphanedAnnotations() {
                       </button>
                       <button
                         className="btn-reassign"
-                        onClick={() => handleReassignStart(annotation.id, annotation.selectedText)}
+                        onClick={() => handleReassignStart(annotation.id, orphanedText)}
                         title="新しいテキストに再割当"
                       >
                         🔄 再割当
@@ -208,22 +204,23 @@ function OrphanedAnnotations() {
           </div>
           <div className="kept-list">
             {keptAnnotations.map((annotation) => {
-              const typeInfo = ANNOTATION_TYPES.find((t) => t.id === annotation.type);
+              const typeInfo = getTypeConfig(annotation.type);
+              const keptText = getAnnotationExactText(annotation);
 
               return (
                 <div key={annotation.id} className="kept-item">
                   <div className="item-header">
                     <span
                       className="item-type"
-                      style={{ backgroundColor: typeInfo?.color }}
+                      style={{ backgroundColor: typeInfo.cssVar }}
                     >
-                      {typeInfo?.icon} {typeInfo?.label}
+                      {typeInfo.icon} {typeInfo.label}
                     </span>
                   </div>
 
                   <div className="item-text">
                     <span className="text-label">元のテキスト:</span>
-                    <span className="text-content kept">"{annotation.selectedText}"</span>
+                    <span className="text-content kept">"{keptText}"</span>
                   </div>
 
                   <div className="item-content">
@@ -233,7 +230,7 @@ function OrphanedAnnotations() {
                   <div className="item-actions">
                     <button
                       className="btn-reassign"
-                      onClick={() => handleReassignStart(annotation.id, annotation.selectedText)}
+                      onClick={() => handleReassignStart(annotation.id, keptText)}
                       title="新しいテキストに再割当"
                     >
                       🔄 再割当

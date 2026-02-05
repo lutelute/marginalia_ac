@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { useAnnotation } from '../../contexts/AnnotationContext';
-import { Annotation } from '../../types';
+import { AnnotationV2 } from '../../types/annotations';
+import { getAnnotationExactText } from '../../utils/selectorUtils';
+import { getTypeConfig } from '../../constants/annotationTypes';
 
 interface TimelineGroup {
   date: string;
@@ -11,19 +13,12 @@ interface TimelineGroup {
 interface TimelineItem {
   id: string;
   type: 'annotation' | 'reply' | 'resolved';
-  annotation: Annotation;
+  annotation: AnnotationV2;
   content: string;
   author: string;
   timestamp: string;
   relativeTime: string;
 }
-
-const TYPE_CONFIG = {
-  comment: { label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
-  review: { label: '校閲', icon: '✏️', color: 'var(--review-color)' },
-  pending: { label: '保留', icon: '⏳', color: 'var(--pending-color)' },
-  discussion: { label: '議論', icon: '💭', color: 'var(--discussion-color)' },
-};
 
 function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
@@ -155,7 +150,8 @@ function TimelineView() {
           <div className="timeline-date">{group.displayDate}</div>
           <div className="timeline-items">
             {group.items.map((item) => {
-              const config = TYPE_CONFIG[item.annotation.type] || TYPE_CONFIG.comment;
+              const config = getTypeConfig(item.annotation.type);
+              const annotationText = getAnnotationExactText(item.annotation);
 
               return (
                 <div
@@ -163,7 +159,7 @@ function TimelineView() {
                   className={`timeline-item ${item.type}`}
                   onClick={() => selectAnnotation(item.annotation.id)}
                 >
-                  <div className="timeline-marker" style={{ backgroundColor: config.color }}>
+                  <div className="timeline-marker" style={{ backgroundColor: config.cssVar }}>
                     {item.type === 'reply' ? '↩' : config.icon}
                   </div>
                   <div className="timeline-content">
@@ -180,7 +176,7 @@ function TimelineView() {
                       {item.content.length > 100 ? '...' : ''}
                     </div>
                     <div className="timeline-context">
-                      "{item.annotation.selectedText?.slice(0, 30)}..."
+                      "{annotationText.slice(0, 30)}{annotationText.length > 30 ? '...' : ''}"
                     </div>
                   </div>
                 </div>

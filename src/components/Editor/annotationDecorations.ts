@@ -1,12 +1,14 @@
 /**
- * CodeMirror Decoration API を使った注釈ハイライト
+ * CodeMirror Decoration API を使った注釈ハイライト（V2対応）
+ * マルチセレクタフォールバック戦略
  */
 import { Decoration, DecorationSet, EditorView } from '@codemirror/view';
 import { StateField, StateEffect, RangeSetBuilder, Text } from '@codemirror/state';
-import { Annotation } from '../../types';
+import { AnnotationV2 } from '../../types/annotations';
+import { anchorAnnotation, getAnnotationExactText } from '../../utils/selectorUtils';
 
 // 注釈更新用Effect
-export const setAnnotationsEffect = StateEffect.define<Annotation[]>();
+export const setAnnotationsEffect = StateEffect.define<AnnotationV2[]>();
 
 // フラッシュハイライト用Effect
 export const flashHighlightEffect = StateEffect.define<{ from: number; to: number } | null>();
@@ -27,54 +29,91 @@ function getAnnotationClass(type: string): string {
   }
 }
 
-// occurrenceIndexを考慮してテキスト位置を特定
-function findAnnotationPosition(
-  doc: Text,
-  selectedText: string,
-  occurrenceIndex: number
-): { from: number; to: number } | null {
-  if (!selectedText) return null;
-
-  const docString = doc.toString();
-  let count = 0;
-  let searchFrom = 0;
-
-  while (true) {
-    const pos = docString.indexOf(selectedText, searchFrom);
-    if (pos === -1) return null;
-    if (count === occurrenceIndex) {
-      return { from: pos, to: pos + selectedText.length };
-    }
-    count++;
-    searchFrom = pos + 1;
+// 簡易ハッシュ関数（数式ブロック用）
+function simpleHashForDeco(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
   }
+  return Math.abs(hash).toString(36);
 }
 
-// Decorationを構築
-function buildDecorations(doc: Text, annotations: Annotation[]): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
+// テキストを正規化（スペース除去）
+function normalizeMathText(text: string): string {
+  return text.replace(/\s+/g, '').trim();
+}
 
-  // 有効な注釈のみを処理（未解決でテキストがあるもの）
+// 数式のblockIdからMarkdownソース内の位置を見つける
+function findMathBlockPosition(
+  doc: Text,
+  blockId: string
+): { from: number; to: number } | null {
+  const docString = doc.toString();
+
+  // ブロック数式を検索 ($$...$$)
+  const blockMathRegex = /\$\$([\s\S]*?)\$\$/g;
+  let match;
+  while ((match = blockMathRegex.exec(docString)) !== null) {
+    const mathContent = match[1];
+    const normalizedContent = normalizeMathText(mathContent);
+    const mathBlockId = `math-${simpleHashForDeco(normalizedContent)}`;
+    if (mathBlockId === blockId) {
+      return { from: match.index, to: match.index + match[0].length };
+    }
+  }
+
+  // インライン数式を検索 ($...$) - $$を除外
+  const inlineMathRegex = /(?<!\$)\$(?!\$)([^$]+)\$(?!\$)/g;
+  while ((match = inlineMathRegex.exec(docString)) !== null) {
+    const mathContent = match[1];
+    const normalizedContent = normalizeMathText(mathContent);
+    const mathBlockId = `math-inline-${simpleHashForDeco(normalizedContent)}`;
+    if (mathBlockId === blockId) {
+      return { from: match.index, to: match.index + match[0].length };
+    }
+  }
+
+  return null;
+}
+
+// Decorationを構築（V2マルチセレクタ対応）
+function buildDecorations(doc: Text, annotations: AnnotationV2[]): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const docString = doc.toString();
+
+  // 有効な注釈のみ処理（active状態でセレクタがあるもの）
   const validAnnotations = annotations
-    .filter((a) => !a.resolved && a.selectedText)
+    .filter((a) => a.status === 'active' && (a.target?.selectors?.length > 0 || a.blockId))
     .map((a) => {
-      const pos = findAnnotationPosition(doc, a.selectedText, a.occurrenceIndex ?? 0);
-      if (pos) {
-        return {
-          ...pos,
-          annotation: a,
-        };
+      let pos: { from: number; to: number } | null = null;
+
+      // blockIdがmath-で始まる場合は数式として処理
+      if (a.blockId && (a.blockId.startsWith('math-') || a.blockId.startsWith('math-inline-'))) {
+        pos = findMathBlockPosition(doc, a.blockId);
+      }
+
+      // マルチセレクタフォールバック（anchorAnnotation使用）
+      if (!pos && a.target?.selectors?.length > 0) {
+        const result = anchorAnnotation(docString, a);
+        if (result) {
+          pos = { from: result.start, to: result.end };
+        }
+      }
+
+      if (pos && pos.from >= 0 && pos.to <= docString.length) {
+        return { ...pos, annotation: a };
       }
       return null;
     })
-    .filter((item): item is { from: number; to: number; annotation: Annotation } => item !== null)
+    .filter((item): item is { from: number; to: number; annotation: AnnotationV2 } => item !== null)
     .sort((a, b) => a.from - b.from);
 
   // 重複を除去（同じ位置のデコレーションは最初のもののみ）
   const addedRanges: Array<{ from: number; to: number }> = [];
 
   for (const item of validAnnotations) {
-    // 既に追加された範囲と重複していないか確認
     const overlaps = addedRanges.some(
       (r) => !(item.to <= r.from || item.from >= r.to)
     );
@@ -118,7 +157,7 @@ function buildFlashDecoration(
 // 注釈ハイライト用StateField
 export const annotationField = StateField.define<{
   decorations: DecorationSet;
-  annotations: Annotation[];
+  annotations: AnnotationV2[];
 }>({
   create() {
     return {
@@ -129,7 +168,6 @@ export const annotationField = StateField.define<{
   update(value, tr) {
     let { decorations, annotations } = value;
 
-    // 注釈更新Effectの処理
     for (const e of tr.effects) {
       if (e.is(setAnnotationsEffect)) {
         annotations = e.value;
@@ -168,7 +206,7 @@ export const flashHighlightField = StateField.define<DecorationSet>({
 // 注釈をエディタに適用するヘルパー関数
 export function dispatchAnnotations(
   view: EditorView,
-  annotations: Annotation[]
+  annotations: AnnotationV2[]
 ): void {
   view.dispatch({
     effects: setAnnotationsEffect.of(annotations),
@@ -186,7 +224,6 @@ export function dispatchFlashHighlight(
     effects: flashHighlightEffect.of({ from, to }),
   });
 
-  // 指定時間後にクリア
   setTimeout(() => {
     view.dispatch({
       effects: flashHighlightEffect.of(null),
@@ -197,8 +234,12 @@ export function dispatchFlashHighlight(
 // 注釈の位置を検索するユーティリティ（外部から使用可能）
 export function findAnnotationPositionInDoc(
   doc: Text,
-  selectedText: string,
-  occurrenceIndex: number
+  annotation: AnnotationV2
 ): { from: number; to: number } | null {
-  return findAnnotationPosition(doc, selectedText, occurrenceIndex);
+  const docString = doc.toString();
+  const result = anchorAnnotation(docString, annotation);
+  if (result) {
+    return { from: result.start, to: result.end };
+  }
+  return null;
 }

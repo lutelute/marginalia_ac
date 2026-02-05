@@ -6,13 +6,8 @@ import HistoryItem from './HistoryItem';
 import BackupPanel from './BackupPanel';
 import TimelineView from './TimelineView';
 import OrphanedAnnotations from './OrphanedAnnotations';
-
-const ANNOTATION_TYPES = [
-  { id: 'comment', label: 'コメント', color: 'var(--comment-color)' },
-  { id: 'review', label: '校閲', color: 'var(--review-color)' },
-  { id: 'pending', label: '保留', color: 'var(--pending-color)' },
-  { id: 'discussion', label: '議論', color: 'var(--discussion-color)' },
-];
+import { ANNOTATION_TYPE_CONFIGS } from '../../constants/annotationTypes';
+import { getEditorPosition, getAnnotationExactText } from '../../utils/selectorUtils';
 
 function AnnotationPanel() {
   const [activeTab, setActiveTab] = useState('annotations');
@@ -77,28 +72,31 @@ function AnnotationPanel() {
       // 孤立/保持された注釈は除外（孤立タブで表示）
       if (a.status === 'orphaned' || a.status === 'kept') return false;
 
-      // ステータスフィルター
-      if (filterStatus === 'unresolved' && a.resolved) return false;
-      if (filterStatus === 'resolved' && !a.resolved) return false;
+      // ステータスフィルター (V2: status-based)
+      if (filterStatus === 'unresolved' && (a.status === 'resolved' || a.status === 'archived')) return false;
+      if (filterStatus === 'resolved' && a.status !== 'resolved' && a.status !== 'archived') return false;
 
-      // タイプフィルター（AND条件：選択されたタイプのいずれかに一致）
+      // タイプフィルター
       if (filterTypes.length > 0 && !filterTypes.includes(a.type)) return false;
 
       return true;
     })
     .sort((a, b) => {
       if (sortOrder === 'time') {
-        return new Date(b.createdAt) - new Date(a.createdAt);
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       } else {
-        if (a.startLine !== b.startLine) {
-          return a.startLine - b.startLine;
-        }
-        return a.startChar - b.startChar;
+        // V2: EditorPositionSelectorから行情報を取得
+        const aPos = getEditorPosition(a);
+        const bPos = getEditorPosition(b);
+        const aLine = aPos?.startLine ?? 0;
+        const bLine = bPos?.startLine ?? 0;
+        if (aLine !== bLine) return aLine - bLine;
+        return (aPos?.startChar ?? 0) - (bPos?.startChar ?? 0);
       }
     });
 
-  const unresolvedCount = annotations.filter((a) => !a.resolved).length;
-  const resolvedCount = annotations.filter((a) => a.resolved).length;
+  const unresolvedCount = annotations.filter((a) => a.status === 'active').length;
+  const resolvedCount = annotations.filter((a) => a.status === 'resolved' || a.status === 'archived').length;
 
   if (!currentFile) {
     return (
@@ -163,11 +161,11 @@ function AnnotationPanel() {
             <span className="text">"{pendingSelection.text.slice(0, 50)}..."</span>
           </div>
           <div className="type-selector">
-            {ANNOTATION_TYPES.map((type) => (
+            {ANNOTATION_TYPE_CONFIGS.map((type) => (
               <button
                 key={type.id}
                 className={`type-btn ${newAnnotationType === type.id ? 'active' : ''}`}
-                style={{ '--type-color': type.color }}
+                style={{ '--type-color': type.cssVar } as React.CSSProperties}
                 onClick={() => setNewAnnotationType(type.id)}
               >
                 {type.label}
@@ -226,11 +224,11 @@ function AnnotationPanel() {
             </div>
           </div>
           <div className="type-filter-row">
-            {ANNOTATION_TYPES.map((type) => (
+            {ANNOTATION_TYPE_CONFIGS.map((type) => (
               <button
                 key={type.id}
                 className={`type-filter-btn ${filterTypes.includes(type.id) ? 'active' : ''}`}
-                style={{ '--type-color': type.color } as React.CSSProperties}
+                style={{ '--type-color': type.cssVar } as React.CSSProperties}
                 onClick={() => toggleTypeFilter(type.id)}
                 title={type.label}
               >

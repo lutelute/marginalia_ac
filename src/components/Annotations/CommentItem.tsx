@@ -1,21 +1,10 @@
 import React, { useState } from 'react';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+import { AnnotationV2 } from '../../types/annotations';
+import { getAnnotationExactText, getEditorPosition } from '../../utils/selectorUtils';
+import { getTypeConfig } from '../../constants/annotationTypes';
 
-const TYPE_COLORS = {
-  comment: 'var(--comment-color)',
-  review: 'var(--review-color)',
-  pending: 'var(--pending-color)',
-  discussion: 'var(--discussion-color)',
-};
-
-const TYPE_LABELS = {
-  comment: 'コメント',
-  review: '校閲',
-  pending: '保留',
-  discussion: '議論',
-};
-
-function CommentItem({ annotation }) {
+function CommentItem({ annotation }: { annotation: AnnotationV2 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [replyContent, setReplyContent] = useState('');
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -28,7 +17,9 @@ function CommentItem({ annotation }) {
   } = useAnnotation();
 
   const isSelected = selectedAnnotation === annotation.id;
-  const typeColor = TYPE_COLORS[annotation.type] || TYPE_COLORS.comment;
+  const config = getTypeConfig(annotation.type);
+  const selectedText = getAnnotationExactText(annotation);
+  const editorPos = getEditorPosition(annotation);
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -49,20 +40,20 @@ function CommentItem({ annotation }) {
 
   return (
     <div
-      className={`comment-item ${isSelected ? 'selected' : ''} ${annotation.resolved ? 'resolved' : ''}`}
-      style={{ '--type-color': typeColor }}
+      className={`comment-item ${isSelected ? 'selected' : ''} ${annotation.status === 'resolved' ? 'resolved' : ''}`}
+      style={{ '--type-color': config.cssVar } as React.CSSProperties}
       onClick={() => selectAnnotation(annotation.id)}
     >
       <div className="comment-header">
-        <span className="type-badge">{TYPE_LABELS[annotation.type]}</span>
-        <span className="line-info">L{annotation.startLine}-{annotation.endLine}</span>
+        <span className="type-badge">{config.label}</span>
+        <span className="line-info">{editorPos ? `L${editorPos.startLine}-${editorPos.endLine}` : ''}</span>
         <span className="date">{formatDate(annotation.createdAt)}</span>
       </div>
 
       <div className="selected-text" onClick={() => setIsExpanded(!isExpanded)}>
         {isExpanded
-          ? annotation.selectedText
-          : annotation.selectedText.slice(0, 50) + (annotation.selectedText.length > 50 ? '...' : '')}
+          ? selectedText
+          : selectedText.slice(0, 50) + (selectedText.length > 50 ? '...' : '')}
       </div>
 
       <div className="comment-content">{annotation.content}</div>
@@ -103,8 +94,8 @@ function CommentItem({ annotation }) {
         <button onClick={() => setShowReplyForm(!showReplyForm)}>
           返信
         </button>
-        <button onClick={() => resolveAnnotation(annotation.id, !annotation.resolved)}>
-          {annotation.resolved ? '再開' : '解決'}
+        <button onClick={() => resolveAnnotation(annotation.id, annotation.status !== 'resolved')}>
+          {annotation.status === 'resolved' ? '再開' : '解決'}
         </button>
         <button className="delete" onClick={() => deleteAnnotation(annotation.id)}>
           削除

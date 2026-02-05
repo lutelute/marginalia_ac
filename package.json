@@ -82,11 +82,13 @@
     }
   },
   "dependencies": {
+    "@annotorious/react": "^3.7.19",
     "@codemirror/lang-markdown": "^6.2.3",
     "@codemirror/language-data": "^6.4.1",
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.23.0",
     "@lezer/highlight": "^1.2.3",
+    "@recogito/react-text-annotator": "^3.4.9",
     "codemirror": "^6.0.1",
     "electron-updater": "^6.7.3",
     "katex": "^0.16.28",

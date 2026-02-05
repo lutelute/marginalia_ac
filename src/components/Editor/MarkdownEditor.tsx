@@ -16,6 +16,8 @@ import {
   dispatchFlashHighlight,
   findAnnotationPositionInDoc,
 } from './annotationDecorations';
+import { createSelectorsFromEditorSelection, getAnnotationExactText, getEditorPosition } from '../../utils/selectorUtils';
+import { AnnotationV2, PendingSelectionV2 } from '../../types/annotations';
 import {
   getEditorVisibleLine,
   getEditorVisibleRange,
@@ -386,6 +388,9 @@ let onEditorScrollCallback: ScrollSyncCallback | null = null;
 // グローバルなスクロール同期コールバック（プレビュー→エディタ）
 let onPreviewScrollCallback: ScrollSyncCallback | null = null;
 
+// 穏やかなスクロール同期コールバック（プレビュー→エディタ、フラッシュなし）
+let onScrollSyncCallback: ScrollSyncCallback | null = null;
+
 export function setEditorScrollCallback(callback: ScrollSyncCallback | null) {
   onEditorScrollCallback = callback;
 }
@@ -394,10 +399,21 @@ export function setPreviewScrollCallback(callback: ScrollSyncCallback | null) {
   onPreviewScrollCallback = callback;
 }
 
-// プレビューからエディタへジャンプ（行番号ベース）
+export function setScrollSyncCallback(callback: ScrollSyncCallback | null) {
+  onScrollSyncCallback = callback;
+}
+
+// プレビューからエディタへジャンプ（行番号ベース）— フラッシュ+フォーカス付き
 export function triggerEditorScroll(line: number) {
   if (onPreviewScrollCallback) {
     onPreviewScrollCallback(line);
+  }
+}
+
+// プレビューからエディタへスクロール同期（穏やか、フラッシュなし）
+export function triggerScrollSync(line: number) {
+  if (onScrollSyncCallback) {
+    onScrollSyncCallback(line);
   }
 }
 
@@ -405,7 +421,7 @@ function MarkdownEditor() {
   const editorRef = useRef(null);
   const viewRef = useRef<EditorView | null>(null);
   const { content, currentFile, updateContent, saveFile, isModified, fileMetadata, loadFileMetadata } = useFile();
-  const { setPendingSelection, annotations, scrollToLine, clearScrollToLine, addAnnotation, selectAnnotation, updateAnnotation, resolveAnnotation, deleteAnnotation, addReply } = useAnnotation();
+  const { setPendingSelection, annotations, scrollToLine, clearScrollToLine, addAnnotation, selectAnnotation, updateAnnotation, resolveAnnotation, deleteAnnotation, addReply, scrollToEditorLine } = useAnnotation();
   const { settings } = useSettings();
   const [showMetadata, setShowMetadata] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -465,18 +481,13 @@ function MarkdownEditor() {
         selection: { anchor: lineInfo.from },
       });
 
-      // 注釈に対応するテキストをフラッシュハイライト
+      // 注釈に対応するテキストをフラッシュハイライト（V2対応）
       const annotation = annotations.find(a => a.id === scrollToLine.annotationId);
       let highlighted = false;
 
-      if (annotation && annotation.selectedText) {
-        const pos = findAnnotationPositionInDoc(
-          doc,
-          annotation.selectedText,
-          annotation.occurrenceIndex ?? 0
-        );
+      if (annotation) {
+        const pos = findAnnotationPositionInDoc(doc, annotation);
         if (pos) {
-          // フラッシュハイライトを適用（2.5秒間）
           dispatchFlashHighlight(view, pos.from, pos.to, 2500);
           highlighted = true;
         }
@@ -632,6 +643,17 @@ function MarkdownEditor() {
     };
   }, [handlePreviewJump]);
 
+  // 穏やかなスクロール同期（プレビュー→エディタ、フラッシュなし）
+  const handleScrollSync = useCallback((line: number) => {
+    if (!viewRef.current) return;
+    scrollEditorToLine(viewRef.current, line, true);
+  }, []);
+
+  useEffect(() => {
+    setScrollSyncCallback(handleScrollSync);
+    return () => setScrollSyncCallback(null);
+  }, [handleScrollSync]);
+
   // ミニマップからのジャンプ
   const handleMinimapClick = useCallback((line: number) => {
     if (!viewRef.current) return;
@@ -732,7 +754,7 @@ function MarkdownEditor() {
     }, 200);
   }, []);
 
-  // テキスト選択時の処理
+  // テキスト選択時の処理（V2セレクタ生成）
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     if (!viewRef.current || !editorRef.current) return;
 
@@ -748,25 +770,22 @@ function MarkdownEditor() {
     const fromLine = doc.lineAt(selection.from);
     const toLine = doc.lineAt(selection.to);
     const selectedText = doc.sliceString(selection.from, selection.to);
-
-    // 同一テキストの何番目の出現かを計算
     const fullText = doc.toString();
-    let occurrenceIndex = 0;
-    let searchPos = 0;
-    while (searchPos < selection.from) {
-      const foundPos = fullText.indexOf(selectedText, searchPos);
-      if (foundPos === -1 || foundPos >= selection.from) break;
-      occurrenceIndex++;
-      searchPos = foundPos + 1;
-    }
 
-    const selectionData = {
-      startLine: fromLine.number,
-      endLine: toLine.number,
-      startChar: selection.from - fromLine.from,
-      endChar: selection.to - toLine.from,
+    // V2: 3種類のセレクタを同時生成
+    const selectors = createSelectorsFromEditorSelection(
+      fullText,
+      selection.from,
+      selection.to,
+      fromLine.number,
+      toLine.number,
+      selection.from - fromLine.from,
+      selection.to - toLine.from
+    );
+
+    const selectionData: PendingSelectionV2 & { text: string } = {
       text: selectedText,
-      occurrenceIndex,
+      selectors,
     };
 
     setPendingSelection(selectionData);
@@ -905,21 +924,24 @@ function MarkdownEditor() {
     setShowExportMenu(false);
   }, [content, currentFile, annotations]);
 
-  // 注釈をMarkdownに埋め込む
+  // 注釈をMarkdownに埋め込む（V2対応）
   const embedAnnotationsToMarkdown = (md, annots) => {
     let result = md;
-    const unresolvedAnnots = annots.filter(a => !a.resolved);
+    const unresolvedAnnots = annots.filter(a => a.status === 'active');
 
-    // 長いテキストから順に置換（短いテキストが先に置換されるのを防ぐ）
-    const sorted = [...unresolvedAnnots].sort((a, b) =>
-      (b.selectedText?.length || 0) - (a.selectedText?.length || 0)
-    );
+    // V2: TextQuoteSelectorのexactを使用
+    const sorted = [...unresolvedAnnots].sort((a, b) => {
+      const aText = getAnnotationExactText(a);
+      const bText = getAnnotationExactText(b);
+      return (bText?.length || 0) - (aText?.length || 0);
+    });
 
     for (const annot of sorted) {
-      if (!annot.selectedText) continue;
+      const selectedText = getAnnotationExactText(annot);
+      if (!selectedText) continue;
       const color = getAnnotationColor(annot.type);
-      const styledText = `<mark style="background-color: ${color}; padding: 2px 4px;" title="${annot.type}: ${annot.content.replace(/"/g, '&quot;')}">${annot.selectedText}</mark>`;
-      result = result.replace(annot.selectedText, styledText);
+      const styledText = `<mark style="background-color: ${color}; padding: 2px 4px;" title="${annot.type}: ${annot.content.replace(/"/g, '&quot;')}">${selectedText}</mark>`;
+      result = result.replace(selectedText, styledText);
     }
 
     return result;
@@ -1115,7 +1137,13 @@ ${styledMd}
                 deleteAnnotation(id);
                 setHoveredAnnotation(null);
               }}
-              onAddReply={(id, content) => addReply(id, content)}
+              onAddReply={(id, replyContent) => addReply(id, replyContent)}
+              onJumpToEditor={(line, annotationId) => {
+                // V2: EditorPositionSelectorの行情報を使用
+                const editorPos = getEditorPosition(hoveredAnnotation.annotation);
+                const targetLine = editorPos ? editorPos.startLine : line;
+                scrollToEditorLine(targetLine, annotationId);
+              }}
               source="editor"
               onMouseEnter={handleCardMouseEnter}
               onMouseLeave={handleCardMouseLeave}

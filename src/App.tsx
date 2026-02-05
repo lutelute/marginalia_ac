@@ -5,7 +5,7 @@ import { SettingsProvider, useSettings } from './contexts/SettingsContext';
 import { ToastProvider } from './contexts/ToastContext';
 import FileTree from './components/Sidebar/FileTree';
 import MarkdownEditor from './components/Editor/MarkdownEditor';
-import MarkdownPreview from './components/Editor/MarkdownPreview';
+import AnnotatedPreview from './components/Editor/AnnotatedPreview';
 import AnnotationPanel from './components/Annotations/AnnotationPanel';
 import SettingsPanel from './components/Settings/SettingsPanel';
 import SplitPane from './components/common/SplitPane';
@@ -49,7 +49,7 @@ function TopBar() {
   }, [settings.editor.showMinimap, updateSettings]);
 
   // 未解決の注釈数（open + pending）
-  const unresolvedCount = annotations.filter(a => !a.resolved).length;
+  const unresolvedCount = annotations.filter(a => a.status === 'active' || a.status === 'orphaned').length;
 
   useEffect(() => {
     if (effectiveTheme === 'dark') {
@@ -511,13 +511,13 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           {editorMode === 'split' ? (
             <SplitPane
               left={<MarkdownEditor />}
-              right={<MarkdownPreview />}
+              right={<AnnotatedPreview />}
               initialLeftWidth={50}
             />
           ) : editorMode === 'edit' ? (
             <MarkdownEditor />
           ) : (
-            <MarkdownPreview />
+            <AnnotatedPreview />
           )}
         </div>
 
@@ -778,16 +778,8 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             min-width: 0 !important;
           }
 
-          .main-content.preview-only {
-            flex: 1;
-          }
-
-          .main-content.preview-only > * {
-            width: 100%;
-            height: 100%;
-          }
-
           .main-content {
+            min-width: 0;
             transition: flex 0.2s ease-out;
           }
 

@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
-import { Annotation } from '../../types';
+import { AnnotationV2 } from '../../types/annotations';
+import { getEditorPosition } from '../../utils/selectorUtils';
 
 interface MinimapProps {
   content: string;
-  annotations: Annotation[];
+  annotations: AnnotationV2[];
   visibleStartLine: number;
   visibleEndLine: number;
   totalLines: number;
@@ -49,12 +50,14 @@ function Minimap({
 
   // 注釈の行番号マップを作成
   const annotationLineMap = useMemo(() => {
-    const map = new Map<number, Annotation[]>();
+    const map = new Map<number, AnnotationV2[]>();
 
-    const unresolvedAnnotations = annotations.filter((a) => !a.resolved);
+    const unresolvedAnnotations = annotations.filter((a) => a.status === 'active');
 
     for (const annotation of unresolvedAnnotations) {
-      const line = annotation.startLine;
+      const editorPos = getEditorPosition(annotation);
+      const line = editorPos?.startLine ?? 0;
+      if (line === 0) continue;
       if (!map.has(line)) {
         map.set(line, []);
       }

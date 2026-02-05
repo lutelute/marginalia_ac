@@ -1,14 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-
-const ANNOTATION_TYPES = [
-  { id: 'comment', label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
-  { id: 'review', label: '校閲', icon: '✏️', color: 'var(--review-color)' },
-  { id: 'pending', label: '保留', icon: '⏳', color: 'var(--pending-color)' },
-  { id: 'discussion', label: '議論', icon: '💭', color: 'var(--discussion-color)' },
-];
+import { AnnotationV2 } from '../../types/annotations';
+import { getAnnotationExactText, getEditorPosition } from '../../utils/selectorUtils';
+import { getTypeConfig } from '../../constants/annotationTypes';
 
 interface AnnotationHoverCardProps {
-  annotation: any;
+  annotation: AnnotationV2;
   position: { x: number; y: number };
   onClose: () => void;
   onSelect: (id: string) => void;
@@ -38,7 +34,8 @@ function AnnotationHoverCard({
   onMouseEnter,
   onMouseLeave,
 }: AnnotationHoverCardProps) {
-  const typeInfo = ANNOTATION_TYPES.find(t => t.id === annotation.type);
+  const typeInfo = getTypeConfig(annotation.type);
+  const selectedText = getAnnotationExactText(annotation);
   const cardRef = useRef<HTMLDivElement>(null);
 
   // 状態管理
@@ -99,12 +96,15 @@ function AnnotationHoverCard({
   };
 
   const handleResolve = () => {
-    onResolve(annotation.id, !annotation.resolved);
+    onResolve(annotation.id, annotation.status !== 'resolved');
   };
 
   const handleJump = () => {
     if (onJumpToEditor) {
-      onJumpToEditor(annotation.startLine, annotation.id);
+      const editorPos = getEditorPosition(annotation);
+      if (editorPos) {
+        onJumpToEditor(editorPos.startLine, annotation.id);
+      }
     }
     if (onJumpToPreview) {
       onJumpToPreview(annotation.id);
@@ -127,12 +127,12 @@ function AnnotationHoverCard({
       onMouseLeave={onMouseLeave}
     >
       {/* ヘッダー */}
-      <div className="ahc-header" style={{ borderColor: typeInfo?.color }}>
+      <div className="ahc-header" style={{ borderColor: typeInfo.cssVar }}>
         <div className="ahc-header-left">
-          <span className="ahc-type" style={{ backgroundColor: typeInfo?.color }}>
-            {typeInfo?.icon} {typeInfo?.label}
+          <span className="ahc-type" style={{ backgroundColor: typeInfo.cssVar }}>
+            {typeInfo.icon} {typeInfo.label}
           </span>
-          {annotation.resolved && <span className="ahc-resolved-badge">解決済み</span>}
+          {annotation.status === 'resolved' && <span className="ahc-resolved-badge">解決済み</span>}
         </div>
         <button className="ahc-close-btn" onClick={onClose}>×</button>
       </div>
@@ -145,7 +145,7 @@ function AnnotationHoverCard({
 
       {/* 選択テキスト */}
       <div className="ahc-selected-text">
-        "{annotation.selectedText?.slice(0, 80)}{annotation.selectedText?.length > 80 ? '...' : ''}"
+        "{selectedText.slice(0, 80)}{selectedText.length > 80 ? '...' : ''}"
       </div>
 
       {/* メインコンテンツ / 編集フォーム */}
@@ -232,7 +232,7 @@ function AnnotationHoverCard({
             💬 返信
           </button>
           <button className="ahc-action-btn resolve" onClick={handleResolve}>
-            {annotation.resolved ? '🔄 再開' : '✅ 解決'}
+            {annotation.status === 'resolved' ? '🔄 再開' : '✅ 解決'}
           </button>
           <button className="ahc-action-btn delete" onClick={() => setMode('delete')} title="削除">
             🗑️

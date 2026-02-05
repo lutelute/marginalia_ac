@@ -29,70 +29,42 @@ export const USER_COLORS = [
   '#f97316', // Orange
 ] as const;
 
-// Annotation Types
-export type AnnotationType = 'comment' | 'review' | 'pending' | 'discussion';
+// V2 Annotation Types (re-export from annotations.ts)
+export type {
+  AnnotationType,
+  AnnotationStatus,
+  AnnotationV2,
+  AnnotationReply,
+  AnnotationSelector,
+  TextQuoteSelector,
+  TextPositionSelector,
+  EditorPositionSelector,
+  AnnotationTarget,
+  HistoryEntryV2,
+  MarginaliaFileV2,
+  PendingSelectionV2,
+  LegacyAnnotation,
+} from './annotations';
 
-// 注釈の状態
-export type AnnotationStatus = 'active' | 'orphaned' | 'kept';
-
-export interface Reply {
-  id: string;
-  content: string;
-  author: string;
-  createdAt: string;
-}
-
-export interface Annotation {
-  id: string;
-  type: AnnotationType;
-  content: string;
-  author: string;
-  selectedText: string;
-  startLine: number;
-  endLine: number;
-  startChar: number;
-  endChar: number;
-  // 同一テキストの何番目の出現か（0始まり）
-  occurrenceIndex?: number;
-  blockId?: string;
-  createdAt: string;
-  resolved: boolean;
-  replies: Reply[];
-  // 注釈の状態（デフォルト: active）
-  status?: AnnotationStatus;
-}
+// V1互換エイリアス（マイグレーション済みコードでも動くように）
+export type { AnnotationV2 as Annotation } from './annotations';
+export type { AnnotationReply as Reply } from './annotations';
+export type { HistoryEntryV2 as HistoryItem } from './annotations';
+export type { PendingSelectionV2 as PendingSelection } from './annotations';
 
 // 削除されたファイルの注釈データ
 export interface OrphanedFileData {
   filePath: string;
   fileName: string;
   lastModified: string;
-  annotations: Annotation[];
-  history: HistoryItem[];
+  annotations: any[];
+  history: any[];
 }
 
 export interface AnnotationFilter {
   status: 'resolved' | 'unresolved' | null;
-  types: AnnotationType[];
+  types: ('comment' | 'review' | 'pending' | 'discussion')[];
   author: string | null;
-}
-
-export interface HistoryItem {
-  id: string;
-  action: string;
-  description: string;
-  timestamp: string;
-  annotationId?: string;
-}
-
-export interface PendingSelection {
-  text: string;
-  startLine: number;
-  endLine: number;
-  startChar: number;
-  endChar: number;
-  occurrenceIndex?: number;
-  blockId?: string;
 }
 
 // File Types
@@ -179,8 +151,8 @@ export interface ElectronAPI {
   readDirectory: (path: string) => Promise<FileTreeNode[]>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<boolean>;
-  readMarginalia: (path: string) => Promise<{ annotations: Annotation[]; history: HistoryItem[] } | null>;
-  writeMarginalia: (path: string, data: { annotations: Annotation[]; history: HistoryItem[] }) => Promise<boolean>;
+  readMarginalia: (path: string) => Promise<{ annotations: any[]; history: any[]; needsMigration?: boolean; _version?: string } | null>;
+  writeMarginalia: (path: string, data: any) => Promise<boolean>;
   exists: (path: string) => Promise<boolean>;
   listBackups: (path: string) => Promise<BackupInfo[]>;
   restoreBackup: (backupPath: string, targetPath: string) => Promise<boolean>;

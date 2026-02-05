@@ -296,14 +296,19 @@ async function readMarginalia(filePath) {
     if (data._tool !== 'marginalia') {
       return { success: false, error: 'Invalid Marginalia file format' };
     }
-    return { success: true, data };
+
+    // バージョン検出: V1ならneedsMigrationフラグを付与
+    const version = data._version || '1.0.0';
+    const needsMigration = version === '1.0.0';
+
+    return { success: true, data, needsMigration };
   } catch (error) {
     if (error.code === 'ENOENT') {
       return {
         success: true,
         data: {
           _tool: 'marginalia',
-          _version: '1.0.0',
+          _version: '2.0.0',
           fileId: generateFileId(filePath),
           filePath: filePath,
           fileName: path.basename(filePath),
@@ -311,6 +316,7 @@ async function readMarginalia(filePath) {
           annotations: [],
           history: [],
         },
+        needsMigration: false,
       };
     }
     return { success: false, error: error.message };

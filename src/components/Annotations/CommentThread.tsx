@@ -1,14 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAnnotation } from '../../contexts/AnnotationContext';
+import { AnnotationV2 } from '../../types/annotations';
+import { getAnnotationExactText, getEditorPosition } from '../../utils/selectorUtils';
+import { getTypeConfig } from '../../constants/annotationTypes';
 
-const TYPE_CONFIG = {
-  comment: { label: 'コメント', icon: '💬', color: 'var(--comment-color)' },
-  review: { label: '校閲', icon: '✏️', color: 'var(--review-color)' },
-  pending: { label: '保留', icon: '⏳', color: 'var(--pending-color)' },
-  discussion: { label: '議論', icon: '💭', color: 'var(--discussion-color)' },
-};
-
-function CommentThread({ annotation, isSelected }) {
+function CommentThread({ annotation, isSelected }: { annotation: AnnotationV2; isSelected: boolean }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [replyContent, setReplyContent] = useState('');
@@ -22,7 +18,8 @@ function CommentThread({ annotation, isSelected }) {
     scrollToEditorLine,
   } = useAnnotation();
 
-  const config = TYPE_CONFIG[annotation.type] || TYPE_CONFIG.comment;
+  const config = getTypeConfig(annotation.type);
+  const selectedText = getAnnotationExactText(annotation);
   const hasReplies = annotation.replies && annotation.replies.length > 0;
 
   // 選択時に自動展開＆スクロール
@@ -78,8 +75,8 @@ function CommentThread({ annotation, isSelected }) {
   return (
     <div
       ref={threadRef}
-      className={`comment-thread ${isSelected ? 'selected' : ''} ${annotation.resolved ? 'resolved' : ''}`}
-      style={{ '--thread-color': config.color }}
+      className={`comment-thread ${isSelected ? 'selected' : ''} ${annotation.status === 'resolved' ? 'resolved' : ''}`}
+      style={{ '--thread-color': config.cssVar } as React.CSSProperties}
       onClick={() => selectAnnotation(annotation.id)}
     >
       {/* ヘッダー（常に表示） */}
@@ -88,7 +85,7 @@ function CommentThread({ annotation, isSelected }) {
           <span className="expand-icon">{isExpanded ? '▼' : '▶'}</span>
           <span className="type-icon">{config.icon}</span>
           <span className="type-label">{config.label}</span>
-          {annotation.resolved && <span className="resolved-badge">解決済み</span>}
+          {annotation.status === 'resolved' && <span className="resolved-badge">解決済み</span>}
         </div>
         <div className="header-right">
           {hasReplies && <span className="reply-count">{annotation.replies.length}件の返信</span>}
@@ -99,7 +96,7 @@ function CommentThread({ annotation, isSelected }) {
       {/* 選択テキスト（プレビュー） */}
       <div className="thread-preview">
         <span className="preview-text">
-          "{annotation.selectedText?.slice(0, 40)}{annotation.selectedText?.length > 40 ? '...' : ''}"
+          "{selectedText.slice(0, 40)}{selectedText.length > 40 ? '...' : ''}"
         </span>
       </div>
 
@@ -154,7 +151,10 @@ function CommentThread({ annotation, isSelected }) {
               className="jump-btn"
               onClick={(e) => {
                 e.stopPropagation();
-                scrollToEditorLine(annotation.startLine, annotation.id);
+                const editorPos = getEditorPosition(annotation);
+                if (editorPos) {
+                  scrollToEditorLine(editorPos.startLine, annotation.id);
+                }
               }}
               title="エディタにジャンプ"
             >
@@ -163,8 +163,8 @@ function CommentThread({ annotation, isSelected }) {
             <button onClick={(e) => { e.stopPropagation(); setShowReplyForm(true); }}>
               返信
             </button>
-            <button onClick={(e) => { e.stopPropagation(); resolveAnnotation(annotation.id, !annotation.resolved); }}>
-              {annotation.resolved ? '再開' : '解決'}
+            <button onClick={(e) => { e.stopPropagation(); resolveAnnotation(annotation.id, annotation.status !== 'resolved'); }}>
+              {annotation.status === 'resolved' ? '再開' : '解決'}
             </button>
             <button className="delete" onClick={(e) => { e.stopPropagation(); deleteAnnotation(annotation.id); }}>
               削除

@@ -91,6 +91,7 @@
     "@recogito/react-text-annotator": "^3.4.9",
     "codemirror": "^6.0.1",
     "electron-updater": "^6.7.3",
+    "js-yaml": "^4.1.1",
     "katex": "^0.16.28",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

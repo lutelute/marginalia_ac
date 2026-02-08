@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fileSystem = require('./fileSystem');
+const buildSystem = require('./buildSystem');
 const {
   checkForUpdates,
   downloadUpdate,
@@ -189,4 +190,40 @@ ipcMain.handle('update:restart', () => {
 // アプリバージョン取得
 ipcMain.handle('app:getVersion', () => {
   return app.getVersion();
+});
+
+// Build System IPC Handlers
+
+// プロジェクト検出
+ipcMain.handle('build:detect-project', async (event, dirPath) => {
+  return await buildSystem.detectProject(dirPath);
+});
+
+// ビルド実行
+ipcMain.handle('build:run', async (event, projectRoot, manifestPath, format) => {
+  return await buildSystem.runBuild(projectRoot, manifestPath, format, (progress) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('build-progress', progress);
+    }
+  });
+});
+
+// テンプレート一覧
+ipcMain.handle('build:list-templates', async (event, dirPath) => {
+  return await buildSystem.listTemplates(dirPath);
+});
+
+// マニフェスト読み込み
+ipcMain.handle('build:read-manifest', async (event, manifestPath) => {
+  return await buildSystem.readManifest(manifestPath);
+});
+
+// マニフェスト書き出し
+ipcMain.handle('build:write-manifest', async (event, manifestPath, data) => {
+  return await buildSystem.writeManifest(manifestPath, data);
+});
+
+// マニフェスト一覧
+ipcMain.handle('build:list-manifests', async (event, dirPath) => {
+  return await buildSystem.listManifests(dirPath);
 });

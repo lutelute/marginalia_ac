@@ -168,6 +168,45 @@ export interface ElectronAPI {
   installUpdate: () => void;
   getAppVersion: () => Promise<string>;
   onUpdateStatus: (callback: (data: UpdateStatus) => void) => () => void;
+  // ビルドシステム関連
+  detectProject: (dirPath: string) => Promise<ProjectDetectionResult>;
+  runBuild: (projectRoot: string, manifestPath: string, format: string) => Promise<BuildResult>;
+  listTemplates: (dirPath: string) => Promise<{ success: boolean; templates: TemplateInfo[]; error?: string }>;
+  readManifest: (manifestPath: string) => Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }>;
+  writeManifest: (manifestPath: string, data: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  listManifests: (dirPath: string) => Promise<{ success: boolean; manifests: ManifestInfo[]; error?: string }>;
+  onBuildProgress: (callback: (data: string) => void) => () => void;
+}
+
+// Build System Types
+export interface ManifestInfo {
+  name: string;
+  path: string;
+  fileName: string;
+}
+
+export interface TemplateInfo {
+  name: string;
+  path: string;
+}
+
+export interface BuildResult {
+  success: boolean;
+  outputPath?: string;
+  error?: string;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface DependencyStatus {
+  python3: boolean;
+  pandoc: boolean;
+  xelatex: boolean;
+}
+
+export interface ProjectDetectionResult {
+  isProject: boolean;
+  projectDir: string | null;
 }
 
 declare global {

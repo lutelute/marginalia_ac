@@ -44,4 +44,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-progress', (event, data) => callback(data));
     return () => ipcRenderer.removeAllListeners('update-progress');
   },
+
+  // ビルドシステム操作
+  detectProject: (dirPath) => ipcRenderer.invoke('build:detect-project', dirPath),
+  runBuild: (projectRoot, manifestPath, format) => ipcRenderer.invoke('build:run', projectRoot, manifestPath, format),
+  listTemplates: (dirPath) => ipcRenderer.invoke('build:list-templates', dirPath),
+  readManifest: (manifestPath) => ipcRenderer.invoke('build:read-manifest', manifestPath),
+  writeManifest: (manifestPath, data) => ipcRenderer.invoke('build:write-manifest', manifestPath, data),
+  listManifests: (dirPath) => ipcRenderer.invoke('build:list-manifests', dirPath),
+
+  // ビルド進捗イベントリスナー
+  onBuildProgress: (callback) => {
+    ipcRenderer.on('build-progress', (event, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('build-progress');
+  },
 });

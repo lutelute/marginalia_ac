@@ -3,7 +3,10 @@ import { FileProvider } from './contexts/FileContext';
 import { AnnotationProvider, useAnnotation } from './contexts/AnnotationContext';
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { BuildProvider, useBuild } from './contexts/BuildContext';
+import { useFile } from './contexts/FileContext';
 import FileTree from './components/Sidebar/FileTree';
+import ProjectPanel from './components/Sidebar/ProjectPanel';
 import MarkdownEditor from './components/Editor/MarkdownEditor';
 import AnnotatedPreview from './components/Editor/AnnotatedPreview';
 import AnnotationPanel from './components/Annotations/AnnotationPanel';
@@ -351,6 +354,22 @@ function FileTextIcon() {
   );
 }
 
+function FileTabIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function BuildTabIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
 function ResizeHandle({ onResize, position }) {
   const handleRef = useRef(null);
   const isDragging = useRef(false);
@@ -406,6 +425,7 @@ function AppStateProvider({ children }) {
     const saved = localStorage.getItem('isAnnotationPanelOpen');
     return saved !== 'false';
   });
+  const [sidebarTab, setSidebarTabState] = useState<'files' | 'project'>('files');
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((prev) => {
@@ -428,8 +448,12 @@ function AppStateProvider({ children }) {
     });
   }, []);
 
+  const setSidebarTab = useCallback((tab: 'files' | 'project') => {
+    setSidebarTabState(tab);
+  }, []);
+
   return (
-    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel }}>
+    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, sidebarTab, toggleSidebar, setEditorMode, toggleAnnotationPanel, setSidebarTab }}>
       {children}
     </AppStateContext.Provider>
   );
@@ -437,6 +461,11 @@ function AppStateProvider({ children }) {
 
 function useAppState() {
   return React.useContext(AppStateContext);
+}
+
+function BuildProviderBridge({ children }: { children: React.ReactNode }) {
+  const { rootPath } = useFile();
+  return <BuildProvider rootPath={rootPath}>{children}</BuildProvider>;
 }
 
 function App() {
@@ -471,6 +500,7 @@ function App() {
       <ToastProvider>
         <AppStateProvider>
           <FileProvider>
+            <BuildProviderBridge>
             <AnnotationProvider>
               <AppContent
                 sidebarWidth={sidebarWidth}
@@ -480,6 +510,7 @@ function App() {
                 appRef={appRef}
               />
             </AnnotationProvider>
+            </BuildProviderBridge>
           </FileProvider>
         </AppStateProvider>
       </ToastProvider>
@@ -488,7 +519,8 @@ function App() {
 }
 
 function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
-  const { isSidebarOpen, editorMode, isAnnotationPanelOpen } = useAppState();
+  const { isSidebarOpen, editorMode, isAnnotationPanelOpen, sidebarTab, setSidebarTab } = useAppState();
+  const { isProject } = useBuild();
 
   const showEditor = editorMode === 'edit' || editorMode === 'split';
   const showPreview = editorMode === 'preview' || editorMode === 'split';
@@ -503,7 +535,25 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             minWidth: isSidebarOpen ? 150 : 0,
           }}
         >
-          <FileTree />
+          <div className="sidebar-tabs">
+            <button
+              className={`sidebar-tab ${sidebarTab === 'files' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('files')}
+            >
+              <FileTabIcon />
+              <span>Files</span>
+            </button>
+            <button
+              className={`sidebar-tab ${sidebarTab === 'project' ? 'active' : ''} ${!isProject ? 'disabled' : ''}`}
+              onClick={() => isProject && setSidebarTab('project')}
+              disabled={!isProject}
+              title={!isProject ? 'プロジェクト未検出' : 'ビルド'}
+            >
+              <BuildTabIcon />
+              <span>Build</span>
+            </button>
+          </div>
+          {sidebarTab === 'files' ? <FileTree /> : <ProjectPanel />}
         </div>
         {isSidebarOpen && <ResizeHandle onResize={handleSidebarResize} position="left" />}
 
@@ -772,6 +822,46 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           .sidebar {
             transition: width 0.2s ease-out, min-width 0.2s ease-out;
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          }
+
+          .sidebar-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            flex-shrink: 0;
+          }
+
+          .sidebar-tab {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 6px 8px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+          }
+
+          .sidebar-tab:hover:not(.disabled) {
+            color: var(--text-primary);
+            background-color: var(--bg-hover);
+          }
+
+          .sidebar-tab.active {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+          }
+
+          .sidebar-tab.disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
           }
 
           .sidebar.closed {

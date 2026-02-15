@@ -29,6 +29,7 @@ function SettingsPanel() {
     updateStatus,
     isDownloading,
     downloadProgress,
+    downloadUrl,
     downloadUpdate,
     installUpdate,
     isElectronApp,
@@ -474,12 +475,26 @@ function SettingsPanel() {
                             >
                               🚀 インストールして再起動
                             </button>
-                          ) : (
+                          ) : downloadUrl ? (
                             <button
                               className="action-btn primary download-btn"
                               onClick={downloadUpdate}
                             >
                               ⬇ ダウンロード
+                            </button>
+                          ) : (
+                            <button
+                              className="action-btn primary download-btn"
+                              onClick={() => {
+                                const releaseUrl = updateInfo?.releaseUrl;
+                                if (releaseUrl) {
+                                  window.open(releaseUrl, '_blank');
+                                } else {
+                                  window.open(`https://github.com/${githubRepo}/releases/latest`, '_blank');
+                                }
+                              }}
+                            >
+                              🔗 GitHub リリースページを開く
                             </button>
                           )}
                         </>

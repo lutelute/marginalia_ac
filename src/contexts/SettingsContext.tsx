@@ -324,7 +324,16 @@ export function SettingsProvider({ children }) {
 
   // アップデートをダウンロード
   const downloadUpdate = useCallback(async () => {
-    if (!isElectron() || !downloadUrl) return;
+    if (!isElectron()) return;
+
+    if (!downloadUrl) {
+      setUpdateInfo(prev => ({
+        ...prev,
+        error: 'ダウンロードURLが見つかりません。リリースページから手動でダウンロードしてください。',
+      }));
+      setUpdateStatus('error');
+      return;
+    }
 
     setIsDownloading(true);
     setDownloadProgress(0);
@@ -433,6 +442,7 @@ export function SettingsProvider({ children }) {
     updateStatus,
     isDownloading,
     downloadProgress,
+    downloadUrl,
     downloadUpdate,
     installUpdate,
     isElectronApp: isElectron(),

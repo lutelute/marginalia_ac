@@ -7,6 +7,21 @@ import { parseBibtex, type BibEntry } from '../codemirror/parsers/bibtex';
 // ---------------------------------------------------------------------------
 
 type BuildStatus = 'idle' | 'building' | 'success' | 'error';
+type BuildAllStatus = 'idle' | 'running' | 'completed';
+
+export interface BuildAllResult {
+  stem: string;
+  success: boolean;
+  outputPath?: string;
+  error?: string;
+}
+
+export interface BuildAllProgress {
+  current: number;
+  total: number;
+  stem: string;
+  status: string;
+}
 
 export interface DemoSection {
   path: string;
@@ -39,6 +54,9 @@ interface BuildState {
   defaultTemplateMap: DefaultTemplateMap | null;
   sourceFiles: string[];
   bibEntries: BibEntry[];
+  buildAllStatus: BuildAllStatus;
+  buildAllResults: BuildAllResult[];
+  buildAllProgress: BuildAllProgress | null;
 }
 
 type BuildAction =
@@ -59,7 +77,10 @@ type BuildAction =
   | { type: 'SET_SOURCE_FILES'; payload: string[] }
   | { type: 'SET_BIB_ENTRIES'; payload: BibEntry[] }
   | { type: 'SET_DEFAULT_DEMO_DATA'; payload: { demoData: DefaultDemoData; templateMap: DefaultTemplateMap } }
-  | { type: 'CLEAR_MANIFEST' };
+  | { type: 'CLEAR_MANIFEST' }
+  | { type: 'BUILD_ALL_START' }
+  | { type: 'BUILD_ALL_PROGRESS'; payload: BuildAllProgress }
+  | { type: 'BUILD_ALL_COMPLETE'; payload: BuildAllResult[] };
 
 interface BuildContextValue extends BuildState {
   effectiveCatalog: CatalogData | null;
@@ -75,6 +96,9 @@ interface BuildContextValue extends BuildState {
   refreshFromDisk: () => void;
   createCustomTemplate: (name: string, baseTemplate?: string) => Promise<{ success: boolean; error?: string }>;
   deleteCustomTemplate: (name: string) => Promise<{ success: boolean; error?: string }>;
+  quickBuildDemo: (demoStem: string, format?: string) => Promise<void>;
+  runAllDemos: (format?: string) => Promise<void>;
+  installSample: (demoStem: string) => Promise<{ success: boolean; copiedFiles?: string[]; error?: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +122,9 @@ const initialState: BuildState = {
   defaultTemplateMap: null,
   sourceFiles: [],
   bibEntries: [],
+  buildAllStatus: 'idle',
+  buildAllResults: [],
+  buildAllProgress: null,
 };
 
 function buildReducer(state: BuildState, action: BuildAction): BuildState {
@@ -159,6 +186,15 @@ function buildReducer(state: BuildState, action: BuildAction): BuildState {
 
     case 'CLEAR_MANIFEST':
       return { ...state, selectedManifestPath: null, manifestData: null };
+
+    case 'BUILD_ALL_START':
+      return { ...state, buildAllStatus: 'running', buildAllResults: [], buildAllProgress: null };
+
+    case 'BUILD_ALL_PROGRESS':
+      return { ...state, buildAllProgress: action.payload };
+
+    case 'BUILD_ALL_COMPLETE':
+      return { ...state, buildAllStatus: 'completed', buildAllResults: action.payload };
 
     default:
       return state;
@@ -281,6 +317,43 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
     return result;
   }, [state.projectDir, loadProjectData]);
 
+  const quickBuildDemo = useCallback(async (demoStem: string, format?: string) => {
+    if (!window.electronAPI?.quickBuildDemo) return;
+    dispatch({ type: 'BUILD_START' });
+    try {
+      const result = await window.electronAPI.quickBuildDemo(demoStem, format);
+      if (result.success) {
+        dispatch({ type: 'BUILD_SUCCESS', payload: result });
+      } else {
+        dispatch({ type: 'BUILD_ERROR', payload: result });
+      }
+    } catch (error: any) {
+      dispatch({ type: 'BUILD_ERROR', payload: { success: false, error: error.message } });
+    }
+  }, []);
+
+  const runAllDemos = useCallback(async (format?: string) => {
+    if (!window.electronAPI?.runAllDemos) return;
+    dispatch({ type: 'BUILD_ALL_START' });
+    try {
+      const result = await window.electronAPI.runAllDemos(format);
+      dispatch({ type: 'BUILD_ALL_COMPLETE', payload: result.results || [] });
+    } catch (error: any) {
+      dispatch({ type: 'BUILD_ALL_COMPLETE', payload: [] });
+    }
+  }, []);
+
+  const installSample = useCallback(async (demoStem: string) => {
+    if (!window.electronAPI?.installSample || !state.projectDir) {
+      return { success: false, error: 'プロジェクトが未検出です' };
+    }
+    const result = await window.electronAPI.installSample(demoStem, state.projectDir);
+    if (result.success && state.projectDir) {
+      await loadProjectData(state.projectDir);
+    }
+    return result;
+  }, [state.projectDir, loadProjectData]);
+
   const runBuild = useCallback(async (manifestPath: string, format: string) => {
     if (!state.projectDir) return;
 
@@ -358,6 +431,15 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
     return cleanup;
   }, []);
 
+  // Build All 進捗リスナー
+  useEffect(() => {
+    if (!window.electronAPI?.onBuildAllProgress) return;
+    const cleanup = window.electronAPI.onBuildAllProgress((data) => {
+      dispatch({ type: 'BUILD_ALL_PROGRESS', payload: data });
+    });
+    return cleanup;
+  }, []);
+
   // ⌘+Shift+B ビルドショートカット
   useEffect(() => {
     if (!window.electronAPI?.onTriggerBuild) return;
@@ -385,6 +467,9 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
     refreshFromDisk,
     createCustomTemplate,
     deleteCustomTemplate,
+    quickBuildDemo,
+    runAllDemos,
+    installSample,
   };
 
   return <BuildContext.Provider value={value}>{children}</BuildContext.Provider>;

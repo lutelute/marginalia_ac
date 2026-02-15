@@ -541,7 +541,7 @@ function AppStateProvider({ children }) {
   });
   const [sidebarSplitRatio, setSidebarSplitRatioState] = useState(() => {
     const saved = localStorage.getItem('sidebarSplitRatio');
-    return saved ? parseInt(saved, 10) : 75;
+    return saved ? parseInt(saved, 10) : 50;
   });
   const [viewingPdf, setViewingPdfState] = useState<string | null>(null);
   const [isGalleryModalOpen, setIsGalleryModalOpen] = useState(false);
@@ -881,7 +881,7 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             className="sidebar-section"
             style={{
               flex: explorerCollapsed ? '0 0 auto' : (!buildCollapsed || !galleryCollapsed ? `0 0 ${sidebarSplitRatio}%` : '1 1 auto'),
-              minHeight: 0,
+              minHeight: explorerCollapsed ? 0 : 80,
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
@@ -914,7 +914,7 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
                 !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` :
                 galleryCollapsed ? '1 1 auto' : '0 0 50%'
               ),
-              minHeight: 0,
+              minHeight: buildCollapsed ? 0 : 80,
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
@@ -948,10 +948,10 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
                 !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` :
                 buildCollapsed ? '1 1 auto' : '0 0 50%'
               ),
-              minHeight: 0,
+              minHeight: galleryCollapsed ? 0 : 80,
               display: 'flex',
               flexDirection: 'column',
-              overflow: 'hidden',
+              overflow: 'auto',
             }}
           >
             <div className="sidebar-section-header" onClick={toggleGallery}>
@@ -972,7 +972,7 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
               </button>
             </div>
             {!galleryCollapsed && (
-              <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
                 <SidebarGallery onOpenFullGallery={openGalleryModal} />
               </div>
             )}

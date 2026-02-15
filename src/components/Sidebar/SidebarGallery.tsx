@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { useBuild } from '../../contexts/BuildContext';
 
 function SidebarGallery({ onOpenFullGallery }: { onOpenFullGallery: () => void }) {
-  const { effectiveCatalog, defaultDemoData, defaultTemplateMap } = useBuild();
+  const { effectiveCatalog, defaultDemoData, defaultTemplateMap, projectDir, quickBuildDemo, runAllDemos, installSample, buildStatus, buildAllStatus, buildAllResults, buildAllProgress } = useBuild();
   const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
+  const [installingDemo, setInstallingDemo] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   if (!effectiveCatalog?.templates) {
     return (
@@ -33,6 +35,27 @@ function SidebarGallery({ onOpenFullGallery }: { onOpenFullGallery: () => void }
         sections: demo.sections,
       };
     }).filter(Boolean) as { stem: string; sections: { path: string; name: string; content: string | null }[] }[];
+  };
+
+  const handleQuickBuild = (e: React.MouseEvent, demoStem: string) => {
+    e.stopPropagation();
+    quickBuildDemo(demoStem, 'pdf');
+  };
+
+  const handleInstall = async (e: React.MouseEvent, demoStem: string) => {
+    e.stopPropagation();
+    setInstallingDemo(demoStem);
+    setInstallError(null);
+    const result = await installSample(demoStem);
+    setInstallingDemo(null);
+    if (!result.success) {
+      setInstallError(result.error || 'インストール失敗');
+      setTimeout(() => setInstallError(null), 3000);
+    }
+  };
+
+  const handleBuildAll = () => {
+    runAllDemos('pdf');
   };
 
   return (
@@ -83,6 +106,27 @@ function SidebarGallery({ onOpenFullGallery }: { onOpenFullGallery: () => void }
                             <span>{section.path}</span>
                           </div>
                         ))}
+                        {/* デモ単体のアクションボタン */}
+                        <div className="sidebar-gallery-demo-actions">
+                          <button
+                            className="sidebar-gallery-action-btn sidebar-gallery-build-btn"
+                            onClick={(e) => handleQuickBuild(e, demo.stem)}
+                            disabled={buildStatus === 'building'}
+                            title={`${demo.stem} をビルド`}
+                          >
+                            {buildStatus === 'building' ? '...' : 'Build'}
+                          </button>
+                          {projectDir && (
+                            <button
+                              className="sidebar-gallery-action-btn sidebar-gallery-install-btn"
+                              onClick={(e) => handleInstall(e, demo.stem)}
+                              disabled={installingDemo === demo.stem}
+                              title={`${demo.stem} をプロジェクトにインストール`}
+                            >
+                              {installingDemo === demo.stem ? '...' : 'Install'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))
                   ) : (
@@ -97,7 +141,40 @@ function SidebarGallery({ onOpenFullGallery }: { onOpenFullGallery: () => void }
           );
         })}
       </div>
+
+      {/* フッター: Build All + 全体表示 */}
       <div className="sidebar-gallery-footer">
+        {/* Build All ボタン */}
+        <button
+          className="sidebar-gallery-build-all-btn"
+          onClick={handleBuildAll}
+          disabled={buildAllStatus === 'running'}
+          title="全デモテンプレートを一括ビルド"
+        >
+          {buildAllStatus === 'running'
+            ? `Building ${buildAllProgress?.current || 0}/${buildAllProgress?.total || '?'}...`
+            : 'Build All'}
+        </button>
+
+        {/* Build All 結果サマリー */}
+        {buildAllStatus === 'completed' && buildAllResults.length > 0 && (
+          <div className="sidebar-gallery-build-all-summary">
+            <span className="sidebar-gallery-summary-ok">
+              {buildAllResults.filter(r => r.success).length} OK
+            </span>
+            {buildAllResults.filter(r => !r.success).length > 0 && (
+              <span className="sidebar-gallery-summary-fail">
+                {buildAllResults.filter(r => !r.success).length} FAIL
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Install エラー表示 */}
+        {installError && (
+          <div className="sidebar-gallery-install-error">{installError}</div>
+        )}
+
         <button className="sidebar-gallery-full-btn" onClick={onOpenFullGallery} title="Template Gallery (⌘⇧T)">
           全て表示
         </button>
@@ -219,10 +296,87 @@ function SidebarGallery({ onOpenFullGallery }: { onOpenFullGallery: () => void }
           padding: 4px 4px 0;
           opacity: 0.7;
         }
+        .sidebar-gallery-demo-actions {
+          display: flex;
+          gap: 4px;
+          padding: 4px 4px 2px;
+        }
+        .sidebar-gallery-action-btn {
+          padding: 2px 8px;
+          border-radius: 3px;
+          font-size: 10px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+          border: 1px solid var(--border-color);
+          background: transparent;
+          color: var(--text-secondary);
+        }
+        .sidebar-gallery-action-btn:hover:not(:disabled) {
+          background: var(--bg-active);
+          color: var(--text-primary);
+        }
+        .sidebar-gallery-action-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .sidebar-gallery-build-btn:hover:not(:disabled) {
+          border-color: var(--accent-color);
+          color: var(--accent-color);
+        }
+        .sidebar-gallery-install-btn:hover:not(:disabled) {
+          border-color: #22c55e;
+          color: #22c55e;
+        }
         .sidebar-gallery-footer {
           flex-shrink: 0;
           padding: 6px 8px;
           border-top: 1px solid var(--border-color);
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .sidebar-gallery-build-all-btn {
+          width: 100%;
+          padding: 4px 8px;
+          border-radius: 4px;
+          border: 1px solid var(--border-color);
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 11px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .sidebar-gallery-build-all-btn:hover:not(:disabled) {
+          background: var(--accent-color);
+          color: white;
+          border-color: var(--accent-color);
+        }
+        .sidebar-gallery-build-all-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+          background: var(--bg-hover);
+        }
+        .sidebar-gallery-build-all-summary {
+          display: flex;
+          gap: 8px;
+          justify-content: center;
+          font-size: 10px;
+          font-weight: 600;
+          padding: 2px 0;
+        }
+        .sidebar-gallery-summary-ok {
+          color: #22c55e;
+        }
+        .sidebar-gallery-summary-fail {
+          color: #ef4444;
+        }
+        .sidebar-gallery-install-error {
+          font-size: 10px;
+          color: #ef4444;
+          text-align: center;
+          padding: 2px 4px;
         }
         .sidebar-gallery-full-btn {
           width: 100%;

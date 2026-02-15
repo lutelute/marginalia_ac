@@ -15,7 +15,7 @@ interface TemplateGalleryProps {
 type PreviewTab = 'pdf' | 'yaml' | 'md';
 
 function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow }: TemplateGalleryProps = {}) {
-  const { effectiveCatalog, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, createCustomTemplate, deleteCustomTemplate, defaultDemoData, defaultTemplateMap } = useBuild();
+  const { effectiveCatalog, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, createCustomTemplate, deleteCustomTemplate, defaultDemoData, defaultTemplateMap, quickBuildDemo, installSample, buildStatus } = useBuild();
   const catalog = effectiveCatalog;
   const [previewTemplate, setPreviewTemplate] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<PreviewTab>('pdf');
@@ -30,6 +30,8 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
+  const [installingDemo, setInstallingDemo] = useState<string | null>(null);
+  const [installFeedback, setInstallFeedback] = useState<{ stem: string; ok: boolean; msg: string } | null>(null);
 
   if (!catalog || !catalog.templates) {
     return (
@@ -297,6 +299,42 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
                     >
                       {applyFeedback === name ? '適用済み ✓' : manifestData?.template === name ? 'Applied' : 'Apply'}
                     </button>
+                    {(() => {
+                      const demoStem = getDemoStem(name);
+                      if (!demoStem) return null;
+                      return (
+                        <>
+                          <button
+                            className="tg-quick-build-btn"
+                            onClick={() => quickBuildDemo(demoStem, 'pdf')}
+                            disabled={buildStatus === 'building'}
+                            title={`${demoStem} をビルド`}
+                          >
+                            {buildStatus === 'building' ? '...' : 'Build'}
+                          </button>
+                          {projectDir && (
+                            <button
+                              className="tg-install-btn"
+                              onClick={async () => {
+                                setInstallingDemo(demoStem);
+                                const result = await installSample(demoStem);
+                                setInstallingDemo(null);
+                                setInstallFeedback({
+                                  stem: demoStem,
+                                  ok: result.success,
+                                  msg: result.success ? 'Installed' : (result.error || 'Failed'),
+                                });
+                                setTimeout(() => setInstallFeedback(null), 3000);
+                              }}
+                              disabled={installingDemo === demoStem}
+                              title={`${demoStem} をプロジェクトにインストール`}
+                            >
+                              {installingDemo === demoStem ? '...' : installFeedback?.stem === demoStem ? (installFeedback.ok ? 'Installed ✓' : 'Error') : 'Install'}
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                     {tmpl._source === 'custom' && (
                       <button
                         className="tg-delete-btn"
@@ -675,6 +713,44 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
           background: var(--accent-hover);
         }
         .template-gallery-apply-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .tg-quick-build-btn {
+          padding: 6px 10px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 600;
+          border: 1px solid var(--border-color);
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .tg-quick-build-btn:hover:not(:disabled) {
+          border-color: var(--accent-color);
+          color: var(--accent-color);
+          background: rgba(0, 120, 212, 0.08);
+        }
+        .tg-quick-build-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .tg-install-btn {
+          padding: 6px 10px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 600;
+          border: 1px solid rgba(34, 197, 94, 0.4);
+          background: transparent;
+          color: #22c55e;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .tg-install-btn:hover:not(:disabled) {
+          background: rgba(34, 197, 94, 0.1);
+        }
+        .tg-install-btn:disabled {
           opacity: 0.4;
           cursor: not-allowed;
         }

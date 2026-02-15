@@ -84,6 +84,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createCustomTemplate: (dirPath, name, baseTemplate) => ipcRenderer.invoke('build:create-custom-template', dirPath, name, baseTemplate),
   deleteCustomTemplate: (dirPath, name) => ipcRenderer.invoke('build:delete-custom-template', dirPath, name),
 
+  // Quick Build / Build All / Install Sample
+  quickBuildDemo: (demoStem, format) => ipcRenderer.invoke('build:quick-build-demo', demoStem, format),
+  runAllDemos: (format) => ipcRenderer.invoke('build:run-all-demos', format),
+  installSample: (demoStem, targetProjectDir) => ipcRenderer.invoke('build:install-sample', demoStem, targetProjectDir),
+  onBuildAllProgress: (callback) => {
+    ipcRenderer.on('build-all-progress', (event, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners('build-all-progress');
+  },
+
   // ファイルをBase64として読み込み（PDF等バイナリ用）
   readFileAsBase64: (filePath) => ipcRenderer.invoke('fs:readFileAsBase64', filePath),
 

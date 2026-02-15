@@ -605,6 +605,174 @@ ipcMain.handle('gallery:notify-change', () => {
   }
 });
 
+// Quick Build: デモマニフェストを直接ビルド（プロジェクト不要）
+ipcMain.handle('build:quick-build-demo', async (event, demoStem, format) => {
+  try {
+    let baseDir;
+    if (app.isPackaged) {
+      baseDir = path.join(process.resourcesPath, 'report-build-system');
+    } else {
+      baseDir = path.join(__dirname, '..', 'report-build-system');
+    }
+
+    const manifestPath = path.join(baseDir, 'projects', `${demoStem}.yaml`);
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(manifestPath)) {
+      return { success: false, error: `マニフェストが見つかりません: ${demoStem}.yaml` };
+    }
+
+    const result = await buildSystem.runBuild(baseDir, manifestPath, format || 'pdf', (progress) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('build-progress', progress);
+      }
+    });
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Build All: 全デモマニフェストを順次ビルド
+ipcMain.handle('build:run-all-demos', async (event, format) => {
+  try {
+    const fsSync = require('fs');
+
+    let baseDir;
+    if (app.isPackaged) {
+      baseDir = path.join(process.resourcesPath, 'report-build-system');
+    } else {
+      baseDir = path.join(__dirname, '..', 'report-build-system');
+    }
+
+    const projectsDir = path.join(baseDir, 'projects');
+    if (!fsSync.existsSync(projectsDir)) {
+      return { success: false, results: [], error: 'projects/ ディレクトリが見つかりません' };
+    }
+
+    const yamlFiles = fsSync.readdirSync(projectsDir)
+      .filter(f => (f.startsWith('demo-') || f.startsWith('example-')) && f.endsWith('.yaml'));
+
+    const results = [];
+    for (let i = 0; i < yamlFiles.length; i++) {
+      const yamlFile = yamlFiles[i];
+      const stem = yamlFile.replace(/\.yaml$/, '');
+      const manifestPath = path.join(projectsDir, yamlFile);
+
+      // 進捗通知
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('build-all-progress', {
+          current: i + 1,
+          total: yamlFiles.length,
+          stem,
+          status: 'building',
+        });
+      }
+
+      try {
+        const result = await buildSystem.runBuild(baseDir, manifestPath, format || 'pdf', (progress) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('build-progress', progress);
+          }
+        });
+        results.push({ stem, ...result });
+      } catch (error) {
+        results.push({ stem, success: false, error: error.message });
+      }
+
+      // 完了通知
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('build-all-progress', {
+          current: i + 1,
+          total: yamlFiles.length,
+          stem,
+          status: results[results.length - 1].success ? 'success' : 'error',
+        });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    return {
+      success: successCount === results.length,
+      results,
+      summary: { total: results.length, success: successCount, failed: results.length - successCount },
+    };
+  } catch (error) {
+    return { success: false, results: [], error: error.message };
+  }
+});
+
+// Install Sample: デモファイルをユーザーのプロジェクトにコピー
+ipcMain.handle('build:install-sample', async (event, demoStem, targetProjectDir) => {
+  try {
+    const fsSync = require('fs');
+    const fsPromises = require('fs').promises;
+    const yaml = require('js-yaml');
+
+    let baseDir;
+    if (app.isPackaged) {
+      baseDir = path.join(process.resourcesPath, 'report-build-system');
+    } else {
+      baseDir = path.join(__dirname, '..', 'report-build-system');
+    }
+
+    const manifestPath = path.join(baseDir, 'projects', `${demoStem}.yaml`);
+    if (!fsSync.existsSync(manifestPath)) {
+      return { success: false, error: `マニフェストが見つかりません: ${demoStem}.yaml` };
+    }
+
+    const manifestContent = fsSync.readFileSync(manifestPath, 'utf-8');
+    let parsed;
+    try {
+      parsed = yaml.load(manifestContent);
+    } catch (e) {
+      return { success: false, error: `YAML パースエラー: ${e.message}` };
+    }
+
+    const copiedFiles = [];
+
+    // 1) マニフェスト YAML → targetProject/projects/
+    const targetManifestDir = path.join(targetProjectDir, 'projects');
+    if (!fsSync.existsSync(targetManifestDir)) {
+      await fsPromises.mkdir(targetManifestDir, { recursive: true });
+    }
+    const targetManifestPath = path.join(targetManifestDir, `${demoStem}.yaml`);
+    if (fsSync.existsSync(targetManifestPath)) {
+      return { success: false, error: `既にファイルが存在します: projects/${demoStem}.yaml` };
+    }
+    await fsPromises.writeFile(targetManifestPath, manifestContent, 'utf-8');
+    copiedFiles.push(`projects/${demoStem}.yaml`);
+
+    // 2) sections の .md ファイル → targetProject/src/
+    if (parsed && Array.isArray(parsed.sections)) {
+      for (const sectionPath of parsed.sections) {
+        if (typeof sectionPath !== 'string') continue;
+        const sourcePath = path.join(baseDir, sectionPath);
+        if (!fsSync.existsSync(sourcePath)) continue;
+
+        // sectionPath は "src/xxx.md" のような相対パスなので、そのままコピー
+        const targetPath = path.join(targetProjectDir, sectionPath);
+        const targetDir = path.dirname(targetPath);
+
+        if (!fsSync.existsSync(targetDir)) {
+          await fsPromises.mkdir(targetDir, { recursive: true });
+        }
+
+        if (fsSync.existsSync(targetPath)) {
+          return { success: false, error: `既にファイルが存在します: ${sectionPath}` };
+        }
+
+        const content = await fsPromises.readFile(sourcePath, 'utf-8');
+        await fsPromises.writeFile(targetPath, content, 'utf-8');
+        copiedFiles.push(sectionPath);
+      }
+    }
+
+    return { success: true, copiedFiles };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // PDF ビューアウィンドウを開く
 ipcMain.handle('shell:openPdfViewer', async (event, filePath) => {
   const pdfWindow = new BrowserWindow({

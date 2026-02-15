@@ -212,6 +212,11 @@ export interface ElectronAPI {
   initMytemp: (dirPath: string) => Promise<{ success: boolean; error?: string }>;
   createCustomTemplate: (dirPath: string, name: string, baseTemplate?: string) => Promise<{ success: boolean; error?: string }>;
   deleteCustomTemplate: (dirPath: string, name: string) => Promise<{ success: boolean; error?: string }>;
+  // Quick Build / Build All / Install Sample
+  quickBuildDemo: (demoStem: string, format?: string) => Promise<BuildResult>;
+  runAllDemos: (format?: string) => Promise<{ success: boolean; results: Array<{ stem: string; success: boolean; outputPath?: string; error?: string }>; summary?: { total: number; success: number; failed: number }; error?: string }>;
+  installSample: (demoStem: string, targetProjectDir: string) => Promise<{ success: boolean; copiedFiles?: string[]; error?: string }>;
+  onBuildAllProgress: (callback: (data: { current: number; total: number; stem: string; status: string }) => void) => () => void;
   // ギャラリーウィンドウ
   openGalleryWindow: (projectDir: string) => Promise<void>;
   getGalleryProjectDir: () => Promise<string | null>;

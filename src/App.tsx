@@ -8,7 +8,7 @@ import { TabProvider, useTab } from './contexts/TabContext';
 import { TerminalProvider } from './contexts/TerminalContext';
 import { useFile } from './contexts/FileContext';
 import FileTree from './components/Sidebar/FileTree';
-import ProjectPanel from './components/Sidebar/ProjectPanel';
+// ProjectPanel は SidebarGallery に統合済み
 import EditorArea from './components/Editor/EditorArea';
 import AnnotationPanel from './components/Annotations/AnnotationPanel';
 import SettingsPanel from './components/Settings/SettingsPanel';
@@ -814,8 +814,8 @@ function App() {
 }
 
 function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
-  const { isSidebarOpen, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, galleryCollapsed, sidebarSplitRatio, toggleExplorer, toggleBuild, toggleGallery, setSidebarSplitRatio, openGalleryModal } = useAppState();
-  const { isProject, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, refreshFromDisk } = useBuild();
+  const { isSidebarOpen, isAnnotationPanelOpen, explorerCollapsed, galleryCollapsed, sidebarSplitRatio, toggleExplorer, toggleGallery, setSidebarSplitRatio, openGalleryModal } = useAppState();
+  const { projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, refreshFromDisk } = useBuild();
   const { rootPath } = useFile();
   const { activeTab, openTerminalTab } = useTab();
   const editorMode = activeTab?.editorMode || 'split';
@@ -880,7 +880,7 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           <div
             className="sidebar-section"
             style={{
-              flex: explorerCollapsed ? '0 0 auto' : (!buildCollapsed || !galleryCollapsed ? `0 0 ${sidebarSplitRatio}%` : '1 1 auto'),
+              flex: explorerCollapsed ? '0 0 auto' : (!galleryCollapsed ? `0 0 ${sidebarSplitRatio}%` : '1 1 auto'),
               minHeight: explorerCollapsed ? 0 : 80,
               display: 'flex',
               flexDirection: 'column',
@@ -900,53 +900,17 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             )}
           </div>
 
-          {/* 縦リサイズハンドル（EXPLORER とその下のセクションが展開時） */}
-          {!explorerCollapsed && (!buildCollapsed || !galleryCollapsed) && (
+          {/* 縦リサイズハンドル（EXPLORER と GALLERY が共に展開時） */}
+          {!explorerCollapsed && !galleryCollapsed && (
             <VerticalResizeHandle onResize={setSidebarSplitRatio} />
           )}
-
-          {/* Build セクション（常時表示） */}
-          <div
-            className="sidebar-section"
-            style={{
-              flex: buildCollapsed ? '0 0 auto' : (
-                !explorerCollapsed && !galleryCollapsed ? `0 0 ${(100 - sidebarSplitRatio) * 0.5}%` :
-                !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` :
-                galleryCollapsed ? '1 1 auto' : '0 0 50%'
-              ),
-              minHeight: buildCollapsed ? 0 : 80,
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}
-          >
-            <div className="sidebar-section-header" onClick={toggleBuild}>
-              <span className={`sidebar-section-chevron ${buildCollapsed ? 'collapsed' : ''}`}>
-                <ChevronDownIcon />
-              </span>
-              <span>BUILD</span>
-            </div>
-            {!buildCollapsed && (
-              <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-                {isProject ? (
-                  <ProjectPanel />
-                ) : (
-                  <div className="sidebar-no-project-hint">
-                    <p>プロジェクトフォルダを開くとビルド機能が使えます</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
 
           {/* GALLERY セクション（常時表示） */}
           <div
             className="sidebar-section"
             style={{
               flex: galleryCollapsed ? '0 0 auto' : (
-                !explorerCollapsed && !buildCollapsed ? `0 0 ${(100 - sidebarSplitRatio) * 0.5}%` :
-                !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` :
-                buildCollapsed ? '1 1 auto' : '0 0 50%'
+                !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` : '1 1 auto'
               ),
               minHeight: galleryCollapsed ? 0 : 80,
               display: 'flex',

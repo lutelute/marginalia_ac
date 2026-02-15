@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useBuild } from '../../contexts/BuildContext';
 
 type SourceFilter = 'all' | 'builtin' | 'custom';
-type GalleryTab = 'templates' | 'guides';
+type GalleryTab = 'templates' | 'guides' | 'samples';
 
 interface TemplateGalleryProps {
   onApplyTemplate?: (name: string) => void;
@@ -202,6 +202,10 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
           <TemplatesTabIcon />
           テンプレート
         </button>
+        <button className={`tg-main-tab ${galleryTab === 'samples' ? 'active' : ''}`} onClick={() => setGalleryTab('samples')}>
+          <SamplesTabIcon />
+          サンプル
+        </button>
         <button className={`tg-main-tab ${galleryTab === 'guides' ? 'active' : ''}`} onClick={() => setGalleryTab('guides')}>
           <GuidesTabIcon />
           ビルドガイド
@@ -351,6 +355,15 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
             ))}
           </div>
         </>
+      ) : galleryTab === 'samples' ? (
+        <SampleExplorer
+          defaultTemplateMap={defaultTemplateMap}
+          defaultDemoData={defaultDemoData}
+          quickBuildDemo={quickBuildDemo}
+          installSample={installSample}
+          buildStatus={buildStatus}
+          projectDir={projectDir}
+        />
       ) : (
         <BuildGuides />
       )}
@@ -1235,8 +1248,378 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
         .tg-guide-table tr:last-child td {
           border-bottom: none;
         }
+
+        /* Sample Explorer */
+        .se-container {
+          display: flex;
+          height: calc(100vh - 200px);
+          min-height: 400px;
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          overflow: hidden;
+          background: var(--bg-secondary);
+        }
+        .se-tree-pane {
+          width: 240px;
+          min-width: 200px;
+          border-right: 1px solid var(--border-color);
+          overflow-y: auto;
+          background: var(--bg-tertiary);
+        }
+        .se-content-pane {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          min-width: 0;
+        }
+        .se-empty {
+          padding: 24px;
+          text-align: center;
+          color: var(--text-muted);
+          font-size: 13px;
+        }
+        .se-template-group {
+          border-bottom: 1px solid var(--border-color);
+        }
+        .se-template-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 12px;
+          cursor: pointer;
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--text-primary);
+          user-select: none;
+          transition: background 0.1s;
+        }
+        .se-template-header:hover {
+          background: var(--bg-hover);
+        }
+        .se-chevron {
+          display: flex;
+          align-items: center;
+          transition: transform 0.15s;
+          color: var(--text-muted);
+          flex-shrink: 0;
+        }
+        .se-chevron.open {
+          transform: rotate(90deg);
+        }
+        .se-template-name {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .se-stem-group {
+          padding-left: 12px;
+        }
+        .se-stem-header {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          padding: 5px 10px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--text-secondary);
+          user-select: none;
+          transition: background 0.1s;
+        }
+        .se-stem-header:hover {
+          background: var(--bg-hover);
+        }
+        .se-stem-name {
+          color: #f59e0b;
+          font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+          font-size: 11px;
+        }
+        .se-file-list {
+          padding-left: 16px;
+        }
+        .se-file-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 3px 10px;
+          cursor: pointer;
+          font-size: 11px;
+          font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+          color: var(--text-muted);
+          border-radius: 3px;
+          margin: 1px 4px;
+          transition: all 0.1s;
+        }
+        .se-file-item:hover {
+          background: var(--bg-hover);
+          color: var(--text-primary);
+        }
+        .se-file-item.selected {
+          background: var(--accent-color);
+          color: white;
+        }
+        .se-file-item.selected svg {
+          stroke: white;
+          opacity: 1;
+        }
+        .se-content-header {
+          padding: 10px 16px;
+          border-bottom: 1px solid var(--border-color);
+          background: var(--bg-secondary);
+          flex-shrink: 0;
+        }
+        .se-content-filename {
+          font-size: 13px;
+          font-weight: 600;
+          font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+          color: var(--accent-color);
+        }
+        .se-content-body {
+          flex: 1;
+          overflow: auto;
+          padding: 16px;
+        }
+        .se-content-footer {
+          flex-shrink: 0;
+          display: flex;
+          gap: 8px;
+          padding: 10px 16px;
+          border-top: 1px solid var(--border-color);
+          background: var(--bg-secondary);
+        }
+        .se-content-empty {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          color: var(--text-muted);
+          font-size: 13px;
+        }
       `}</style>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sample Explorer
+// ---------------------------------------------------------------------------
+
+interface SampleExplorerProps {
+  defaultTemplateMap: Record<string, string[]> | null;
+  defaultDemoData: Record<string, { manifestYaml: string; sections: { path: string; name: string; content: string | null }[] }> | null;
+  quickBuildDemo: (stem: string, fmt: string) => void;
+  installSample: (stem: string) => Promise<{ success: boolean; error?: string }>;
+  buildStatus: string;
+  projectDir: string | null;
+}
+
+interface SelectedFile {
+  type: 'yaml' | 'md';
+  stem: string;
+  sectionIndex?: number;
+}
+
+function SampleExplorer({ defaultTemplateMap, defaultDemoData, quickBuildDemo, installSample, buildStatus, projectDir }: SampleExplorerProps) {
+  const [expandedTemplates, setExpandedTemplates] = useState<Set<string>>(new Set());
+  const [expandedStems, setExpandedStems] = useState<Set<string>>(new Set());
+  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
+  const [installingDemo, setInstallingDemo] = useState<string | null>(null);
+  const [installFeedback, setInstallFeedback] = useState<{ stem: string; ok: boolean } | null>(null);
+
+  const templateNames = defaultTemplateMap ? Object.keys(defaultTemplateMap) : [];
+
+  const toggleTemplate = (name: string) => {
+    setExpandedTemplates(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const toggleStem = (stem: string) => {
+    setExpandedStems(prev => {
+      const next = new Set(prev);
+      if (next.has(stem)) next.delete(stem);
+      else next.add(stem);
+      return next;
+    });
+  };
+
+  const getFileContent = (): { filename: string; content: string } | null => {
+    if (!selectedFile || !defaultDemoData) return null;
+    const demo = defaultDemoData[selectedFile.stem];
+    if (!demo) return null;
+
+    if (selectedFile.type === 'yaml') {
+      return { filename: `${selectedFile.stem}.yaml`, content: demo.manifestYaml };
+    }
+    if (selectedFile.type === 'md' && selectedFile.sectionIndex !== undefined) {
+      const section = demo.sections[selectedFile.sectionIndex];
+      if (!section || !section.content) return null;
+      return { filename: section.name, content: section.content };
+    }
+    return null;
+  };
+
+  const handleInstall = async (stem: string) => {
+    setInstallingDemo(stem);
+    const result = await installSample(stem);
+    setInstallingDemo(null);
+    setInstallFeedback({ stem, ok: result.success });
+    setTimeout(() => setInstallFeedback(null), 3000);
+  };
+
+  const fileData = getFileContent();
+
+  return (
+    <div className="se-container">
+      {/* 左ペイン: ツリー */}
+      <div className="se-tree-pane">
+        {templateNames.length === 0 ? (
+          <div className="se-empty">No samples available</div>
+        ) : (
+          templateNames.map(tmplName => {
+            const stems = defaultTemplateMap![tmplName] || [];
+            const isExpanded = expandedTemplates.has(tmplName);
+            return (
+              <div key={tmplName} className="se-template-group">
+                <div className="se-template-header" onClick={() => toggleTemplate(tmplName)}>
+                  <span className={`se-chevron ${isExpanded ? 'open' : ''}`}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </span>
+                  <span className="se-template-name">{tmplName}</span>
+                </div>
+                {isExpanded && stems.map(stem => {
+                  const demo = defaultDemoData?.[stem];
+                  if (!demo) return null;
+                  const isStemExpanded = expandedStems.has(stem);
+                  return (
+                    <div key={stem} className="se-stem-group">
+                      <div className="se-stem-header" onClick={() => toggleStem(stem)}>
+                        <span className={`se-chevron ${isStemExpanded ? 'open' : ''}`}>
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="9 18 15 12 9 6" />
+                          </svg>
+                        </span>
+                        <span className="se-stem-name">{stem}</span>
+                      </div>
+                      {isStemExpanded && (
+                        <div className="se-file-list">
+                          {/* YAML */}
+                          <div
+                            className={`se-file-item ${selectedFile?.stem === stem && selectedFile?.type === 'yaml' ? 'selected' : ''}`}
+                            onClick={() => setSelectedFile({ type: 'yaml', stem })}
+                          >
+                            <YamlFileIcon />
+                            <span>{stem}.yaml</span>
+                          </div>
+                          {/* MD sections */}
+                          {demo.sections.map((section, i) => (
+                            <div
+                              key={i}
+                              className={`se-file-item ${selectedFile?.stem === stem && selectedFile?.type === 'md' && selectedFile?.sectionIndex === i ? 'selected' : ''}`}
+                              onClick={() => setSelectedFile({ type: 'md', stem, sectionIndex: i })}
+                            >
+                              <MdFileIcon />
+                              <span>{section.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* 右ペイン: ファイル内容 */}
+      <div className="se-content-pane">
+        {fileData ? (
+          <>
+            <div className="se-content-header">
+              <span className="se-content-filename">{fileData.filename}</span>
+            </div>
+            <div className="se-content-body">
+              <pre className="tg-preview-code">{fileData.content}</pre>
+            </div>
+            {/* フッター: Build / Install */}
+            {selectedFile && (
+              <div className="se-content-footer">
+                <button
+                  className="tg-quick-build-btn"
+                  onClick={() => quickBuildDemo(selectedFile.stem, 'pdf')}
+                  disabled={buildStatus === 'building'}
+                >
+                  {buildStatus === 'building' ? '...' : 'Build'}
+                </button>
+                {projectDir && (
+                  <button
+                    className="tg-install-btn"
+                    onClick={() => handleInstall(selectedFile.stem)}
+                    disabled={installingDemo === selectedFile.stem}
+                  >
+                    {installingDemo === selectedFile.stem ? '...' :
+                      installFeedback?.stem === selectedFile.stem ?
+                        (installFeedback.ok ? 'Installed' : 'Error') : 'Install'}
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="se-content-empty">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span>ファイルを選択してください</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function YamlFileIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  );
+}
+
+function MdFileIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.5">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+    </svg>
+  );
+}
+
+function SamplesTabIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10 9 9 9 8 9" />
+    </svg>
   );
 }
 

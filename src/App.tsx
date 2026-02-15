@@ -417,6 +417,17 @@ function BuildTabIcon() {
   );
 }
 
+function GalleryIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+
 function ResizeHandle({ onResize, position }) {
   const handleRef = useRef(null);
   const isDragging = useRef(false);
@@ -907,6 +918,14 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
               )}
             </div>
           )}
+
+          {/* ギャラリーボタン（常時表示） */}
+          <div className="sidebar-gallery-btn-container">
+            <button className="sidebar-gallery-btn" onClick={openGalleryModal} title="Template Gallery (⌘⇧T)">
+              <GalleryIcon />
+              <span>Template Gallery</span>
+            </button>
+          </div>
         </div>
         {isSidebarOpen && <ResizeHandle onResize={handleSidebarResize} position="left" />}
 
@@ -1233,6 +1252,43 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           .vertical-resize-handle:hover .vertical-resize-handle-bar {
             width: 60px;
             background-color: white;
+          }
+
+          .sidebar-gallery-btn-container {
+            flex-shrink: 0;
+            padding: 8px;
+            border-top: 1px solid var(--border-color);
+          }
+
+          .sidebar-gallery-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 7px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+          }
+
+          .sidebar-gallery-btn:hover {
+            background: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+          }
+
+          .sidebar-gallery-btn svg {
+            flex-shrink: 0;
+            opacity: 0.7;
+          }
+
+          .sidebar-gallery-btn:hover svg {
+            opacity: 1;
           }
 
           .sidebar.closed {

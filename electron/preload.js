@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeManifest: (manifestPath, data) => ipcRenderer.invoke('build:write-manifest', manifestPath, data),
   listManifests: (dirPath) => ipcRenderer.invoke('build:list-manifests', dirPath),
   readCatalog: (dirPath) => ipcRenderer.invoke('build:read-catalog', dirPath),
+  readDefaultCatalog: () => ipcRenderer.invoke('build:read-default-catalog'),
   listSourceFiles: (dirPath) => ipcRenderer.invoke('build:list-source-files', dirPath),
   initMytemp: (dirPath) => ipcRenderer.invoke('build:init-mytemp', dirPath),
   createCustomTemplate: (dirPath, name, baseTemplate) => ipcRenderer.invoke('build:create-custom-template', dirPath, name, baseTemplate),

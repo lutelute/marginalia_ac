@@ -206,6 +206,7 @@ export interface ElectronAPI {
   onBuildProgress: (callback: (data: string) => void) => () => void;
   onTriggerBuild: (callback: () => void) => () => void;
   readCatalog: (dirPath: string) => Promise<{ success: boolean; catalog: CatalogData | null; error?: string }>;
+  readDefaultCatalog: () => Promise<{ success: boolean; catalog: CatalogData | null; error?: string }>;
   listSourceFiles: (dirPath: string) => Promise<{ success: boolean; files: string[]; error?: string }>;
   initMytemp: (dirPath: string) => Promise<{ success: boolean; error?: string }>;
   createCustomTemplate: (dirPath: string, name: string, baseTemplate?: string) => Promise<{ success: boolean; error?: string }>;

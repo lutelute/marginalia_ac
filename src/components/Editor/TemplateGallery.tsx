@@ -15,7 +15,8 @@ interface TemplateGalleryProps {
 type PreviewTab = 'pdf' | 'yaml' | 'md';
 
 function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow }: TemplateGalleryProps = {}) {
-  const { catalog, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, createCustomTemplate, deleteCustomTemplate } = useBuild();
+  const { effectiveCatalog, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, createCustomTemplate, deleteCustomTemplate } = useBuild();
+  const catalog = effectiveCatalog;
   const [previewTemplate, setPreviewTemplate] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<PreviewTab>('pdf');
   const [previewYaml, setPreviewYaml] = useState<string | null>(null);
@@ -145,7 +146,7 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
       <div className="template-gallery-header">
         <h2>Template Gallery</h2>
         <span className="template-gallery-count">{templates.length} templates</span>
-        <button className="tg-create-btn" onClick={() => setShowCreateDialog(true)} title="カスタムテンプレートを作成">
+        <button className="tg-create-btn" onClick={() => setShowCreateDialog(true)} title={!projectDir ? 'プロジェクトを開いてから作成してください' : 'カスタムテンプレートを作成'} disabled={!projectDir}>
           + 作成
         </button>
         <div className="tg-header-actions">
@@ -248,8 +249,8 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
                     <button
                       className="template-gallery-apply-btn"
                       onClick={() => handleApply(name)}
-                      disabled={!selectedManifestPath}
-                      title={!selectedManifestPath ? 'マニフェストを選択してください' : `${name} をマニフェストに適用`}
+                      disabled={!selectedManifestPath && !onApplyTemplate}
+                      title={!projectDir ? 'プロジェクトを開いてから適用してください' : !selectedManifestPath ? 'マニフェストを選択してください' : `${name} をマニフェストに適用`}
                     >
                       {applyFeedback === name ? '適用済み ✓' : manifestData?.template === name ? 'Applied' : 'Apply'}
                     </button>

@@ -412,6 +412,51 @@ ipcMain.handle('build:read-catalog', async (event, dirPath) => {
   return await buildSystem.readCatalog(dirPath);
 });
 
+// デフォルトカタログ読み込み（アプリ内蔵テンプレート）
+ipcMain.handle('build:read-default-catalog', async () => {
+  try {
+    const yaml = require('js-yaml');
+    const fsSync = require('fs');
+
+    // dev 時: プロジェクトルート配下の report-build-system/templates/catalog.yaml
+    // packaged 時: extraResources にコピーされたファイル
+    let catalogPath;
+    if (app.isPackaged) {
+      catalogPath = path.join(process.resourcesPath, 'report-build-system', 'templates', 'catalog.yaml');
+    } else {
+      catalogPath = path.join(__dirname, '..', 'report-build-system', 'templates', 'catalog.yaml');
+    }
+
+    if (!fsSync.existsSync(catalogPath)) {
+      return { success: false, catalog: null, error: 'Default catalog not found' };
+    }
+
+    const content = fsSync.readFileSync(catalogPath, 'utf-8');
+    let data = yaml.load(content);
+    if (data && !data.templates) {
+      data = { templates: data };
+    }
+
+    // builtin タグを付与
+    const templates = {};
+    if (data && data.templates) {
+      for (const [name, tmpl] of Object.entries(data.templates)) {
+        templates[name] = { ...tmpl, _source: 'builtin' };
+      }
+    }
+
+    return {
+      success: true,
+      catalog: {
+        templates,
+        common_params: data?.common_params || {},
+      },
+    };
+  } catch (error) {
+    return { success: false, catalog: null, error: error.message };
+  }
+});
+
 // ソースファイル一覧
 ipcMain.handle('build:list-source-files', async (event, dirPath) => {
   return await buildSystem.listSourceFiles(dirPath);

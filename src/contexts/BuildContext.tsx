@@ -20,6 +20,7 @@ interface BuildState {
   selectedManifestPath: string | null;
   manifestData: ManifestData | null;
   catalog: CatalogData | null;
+  defaultCatalog: CatalogData | null;
   sourceFiles: string[];
   bibEntries: BibEntry[];
 }
@@ -38,11 +39,13 @@ type BuildAction =
   | { type: 'SET_MANIFEST_DATA'; payload: ManifestData }
   | { type: 'UPDATE_MANIFEST_DATA'; payload: ManifestData }
   | { type: 'SET_CATALOG'; payload: CatalogData | null }
+  | { type: 'SET_DEFAULT_CATALOG'; payload: CatalogData | null }
   | { type: 'SET_SOURCE_FILES'; payload: string[] }
   | { type: 'SET_BIB_ENTRIES'; payload: BibEntry[] }
   | { type: 'CLEAR_MANIFEST' };
 
 interface BuildContextValue extends BuildState {
+  effectiveCatalog: CatalogData | null;
   detectProject: (dirPath: string) => Promise<void>;
   runBuild: (manifestPath: string, format: string) => Promise<void>;
   loadProjectData: (dirPath: string) => Promise<void>;
@@ -71,6 +74,7 @@ const initialState: BuildState = {
   selectedManifestPath: null,
   manifestData: null,
   catalog: null,
+  defaultCatalog: null,
   sourceFiles: [],
   bibEntries: [],
 };
@@ -85,7 +89,7 @@ function buildReducer(state: BuildState, action: BuildAction): BuildState {
       };
 
     case 'CLEAR_PROJECT':
-      return { ...initialState };
+      return { ...initialState, defaultCatalog: state.defaultCatalog };
 
     case 'SET_MANIFESTS':
       return { ...state, manifests: action.payload };
@@ -119,6 +123,9 @@ function buildReducer(state: BuildState, action: BuildAction): BuildState {
 
     case 'SET_CATALOG':
       return { ...state, catalog: action.payload };
+
+    case 'SET_DEFAULT_CATALOG':
+      return { ...state, defaultCatalog: action.payload };
 
     case 'SET_SOURCE_FILES':
       return { ...state, sourceFiles: action.payload };
@@ -279,6 +286,16 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
     }
   }, [state.projectDir, state.selectedManifestPath, state.manifestData, saveManifest]);
 
+  // アプリ起動時にデフォルトカタログをロード
+  useEffect(() => {
+    if (!window.electronAPI?.readDefaultCatalog) return;
+    window.electronAPI.readDefaultCatalog().then((result) => {
+      if (result.success && result.catalog) {
+        dispatch({ type: 'SET_DEFAULT_CATALOG', payload: result.catalog });
+      }
+    });
+  }, []);
+
   // rootPath 変更時にプロジェクト検出
   useEffect(() => {
     if (rootPath) {
@@ -318,8 +335,12 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
     return cleanup;
   }, [state.selectedManifestPath, state.manifestData, runBuild]);
 
+  // プロジェクトカタログ優先、なければデフォルトカタログにフォールバック
+  const effectiveCatalog = state.catalog || state.defaultCatalog;
+
   const value: BuildContextValue = {
     ...state,
+    effectiveCatalog,
     detectProject,
     runBuild,
     loadProjectData,

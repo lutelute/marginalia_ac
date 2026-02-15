@@ -89,6 +89,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openPath: (filePath) => ipcRenderer.invoke('shell:openPath', filePath),
   openPdfViewer: (filePath) => ipcRenderer.invoke('shell:openPdfViewer', filePath),
 
+  // ギャラリーウィンドウ操作
+  openGalleryWindow: (projectDir) => ipcRenderer.invoke('gallery:open-window', projectDir),
+  getGalleryProjectDir: () => ipcRenderer.invoke('gallery:get-project-dir'),
+  galleryApplyTemplate: (templateName) => ipcRenderer.invoke('gallery:apply-template', templateName),
+  galleryNotifyChange: () => ipcRenderer.invoke('gallery:notify-change'),
+  onOpenGallery: (callback) => {
+    ipcRenderer.on('open-gallery', () => callback());
+    return () => ipcRenderer.removeAllListeners('open-gallery');
+  },
+  onGalleryApplyTemplate: (callback) => {
+    ipcRenderer.on('gallery-apply-template', (event, templateName) => callback(templateName));
+    return () => ipcRenderer.removeAllListeners('gallery-apply-template');
+  },
+  onGalleryDataChanged: (callback) => {
+    ipcRenderer.on('gallery-data-changed', () => callback());
+    return () => ipcRenderer.removeAllListeners('gallery-data-changed');
+  },
+
   // ビルド進捗イベントリスナー
   onBuildProgress: (callback) => {
     ipcRenderer.on('build-progress', (event, data) => callback(data));

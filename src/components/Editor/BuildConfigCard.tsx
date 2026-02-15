@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useBuild } from '../../contexts/BuildContext';
-import { useTab } from '../../contexts/TabContext';
+import { useAppState } from '../../App';
 import TemplatePreviewPopup from './TemplatePreviewPopup';
 import type { DocxDirectConfig } from '../../types';
 
@@ -16,7 +16,7 @@ function BuildConfigCard() {
     updateManifestData,
     saveManifest,
   } = useBuild();
-  const { openGallery } = useTab();
+  const { openGalleryModal } = useAppState();
 
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(COLLAPSED_KEY) === 'true';
@@ -202,7 +202,7 @@ function BuildConfigCard() {
               )}
               <button
                 className="bcc-browse-gallery-btn"
-                onClick={openGallery}
+                onClick={openGalleryModal}
                 type="button"
                 title="テンプレートギャラリーを開く"
               >

@@ -210,6 +210,14 @@ export interface ElectronAPI {
   initMytemp: (dirPath: string) => Promise<{ success: boolean; error?: string }>;
   createCustomTemplate: (dirPath: string, name: string, baseTemplate?: string) => Promise<{ success: boolean; error?: string }>;
   deleteCustomTemplate: (dirPath: string, name: string) => Promise<{ success: boolean; error?: string }>;
+  // ギャラリーウィンドウ
+  openGalleryWindow: (projectDir: string) => Promise<void>;
+  getGalleryProjectDir: () => Promise<string | null>;
+  galleryApplyTemplate: (templateName: string) => Promise<void>;
+  galleryNotifyChange: () => Promise<void>;
+  onOpenGallery: (callback: () => void) => () => void;
+  onGalleryApplyTemplate: (callback: (templateName: string) => void) => () => void;
+  onGalleryDataChanged: (callback: () => void) => () => void;
 }
 
 // Build System Types

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useBuild } from '../../contexts/BuildContext';
 import { useTab } from '../../contexts/TabContext';
+import { useAppState } from '../../App';
 
 /** マニフェスト名 + フォーマットから出力パスを算出 */
 function getOutputPath(projectDir: string, manifestPath: string, fmt: string) {
@@ -21,7 +22,8 @@ function ProjectPanel() {
     projectDir,
   } = useBuild();
 
-  const { openTab, openGallery } = useTab();
+  const { openTab } = useTab();
+  const { openGalleryModal } = useAppState();
 
   const [buildingManifest, setBuildingManifest] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
@@ -112,7 +114,7 @@ function ProjectPanel() {
         <span className="project-panel-title">Build</span>
         <div className="project-panel-actions">
           <button
-            onClick={openGallery}
+            onClick={openGalleryModal}
             title="テンプレートギャラリー"
           >
             <GalleryIcon />

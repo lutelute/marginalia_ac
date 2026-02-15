@@ -12,6 +12,8 @@ const {
 } = require('./updateManager');
 
 let mainWindow;
+let galleryWindow = null;
+let galleryProjectDir = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -105,6 +107,16 @@ app.whenReady().then(() => {
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('new-terminal');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Template Gallery',
+          accelerator: 'CmdOrCtrl+Shift+T',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('open-gallery');
             }
           },
         },
@@ -430,6 +442,58 @@ ipcMain.handle('fs:readFileAsBase64', async (event, filePath) => {
 // ファイルを外部アプリで開く
 ipcMain.handle('shell:openPath', async (event, filePath) => {
   return await shell.openPath(filePath);
+});
+
+// ギャラリーウィンドウを開く
+ipcMain.handle('gallery:open-window', async (event, projectDir) => {
+  galleryProjectDir = projectDir;
+  if (galleryWindow && !galleryWindow.isDestroyed()) {
+    galleryWindow.focus();
+    return;
+  }
+
+  galleryWindow = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    title: 'Template Gallery — Marginalia',
+    parent: mainWindow,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#1e1e1e',
+  });
+
+  if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
+    galleryWindow.loadURL('http://localhost:5190/?view=gallery');
+  } else {
+    galleryWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: '?view=gallery' });
+  }
+
+  galleryWindow.on('closed', () => {
+    galleryWindow = null;
+  });
+});
+
+// ギャラリーウィンドウ用: プロジェクトディレクトリ取得
+ipcMain.handle('gallery:get-project-dir', () => {
+  return galleryProjectDir;
+});
+
+// ギャラリーウィンドウ → メインウィンドウ: テンプレート適用
+ipcMain.handle('gallery:apply-template', (event, templateName) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('gallery-apply-template', templateName);
+  }
+});
+
+// ギャラリーウィンドウ → メインウィンドウ: データ変更通知
+ipcMain.handle('gallery:notify-change', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('gallery-data-changed');
+  }
 });
 
 // PDF ビューアウィンドウを開く

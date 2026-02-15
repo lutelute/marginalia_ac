@@ -1,6 +1,9 @@
 // Editor Mode
 export type EditorMode = 'edit' | 'split' | 'preview';
 
+// Tab Types
+export type { Tab, EditorGroup, TabLayout, FileContentCache } from './tabs';
+
 // Toast Types
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -72,6 +75,7 @@ export interface FileTreeNode {
   name: string;
   path: string;
   type: 'file' | 'directory';
+  isHidden?: boolean;
   children?: FileTreeNode[];
 }
 
@@ -119,12 +123,17 @@ export interface DeveloperSettings {
   showDebugInfo: boolean;
 }
 
+export interface FilesSettings {
+  showHiddenFiles: boolean;
+}
+
 export interface Settings {
   editor: EditorSettings;
   preview: PreviewSettings;
   backup: BackupSettings;
   ui: UISettings;
   developer: DeveloperSettings;
+  files: FilesSettings;
 }
 
 export interface UpdateInfo {
@@ -146,9 +155,13 @@ export type UpdateStatus =
   | { status: 'error'; message: string };
 
 // Electron API Types
+export interface ReadDirectoryOptions {
+  showHidden?: boolean;
+}
+
 export interface ElectronAPI {
   openDirectory: () => Promise<string | null>;
-  readDirectory: (path: string) => Promise<FileTreeNode[]>;
+  readDirectory: (path: string, options?: ReadDirectoryOptions) => Promise<FileTreeNode[]>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   readMarginalia: (path: string) => Promise<{ annotations: any[]; history: any[]; needsMigration?: boolean; _version?: string } | null>;
@@ -168,14 +181,31 @@ export interface ElectronAPI {
   installUpdate: () => void;
   getAppVersion: () => Promise<string>;
   onUpdateStatus: (callback: (data: UpdateStatus) => void) => () => void;
+  // ターミナル関連
+  terminalCreate: (cwd?: string) => Promise<{ sessionId: string; pid: number }>;
+  terminalWrite: (sessionId: string, data: string) => Promise<void>;
+  terminalResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
+  terminalDestroy: (sessionId: string) => Promise<void>;
+  onTerminalData: (sessionId: string, callback: (data: string) => void) => () => void;
+  onTerminalExit: (sessionId: string, callback: (exitCode: number, signal: number) => void) => () => void;
+  onNewTerminal: (callback: () => void) => () => void;
+  // BibTeX ファイル
+  listBibFiles: (dirPath: string) => Promise<{ success: boolean; files: { path: string; content: string }[]; error?: string }>;
   // ビルドシステム関連
+  checkDependencies: () => Promise<DependencyStatus>;
   detectProject: (dirPath: string) => Promise<ProjectDetectionResult>;
   runBuild: (projectRoot: string, manifestPath: string, format: string) => Promise<BuildResult>;
   listTemplates: (dirPath: string) => Promise<{ success: boolean; templates: TemplateInfo[]; error?: string }>;
   readManifest: (manifestPath: string) => Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }>;
   writeManifest: (manifestPath: string, data: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   listManifests: (dirPath: string) => Promise<{ success: boolean; manifests: ManifestInfo[]; error?: string }>;
+  readFileAsBase64: (filePath: string) => Promise<string>;
+  openPath: (filePath: string) => Promise<string>;
+  openPdfViewer: (filePath: string) => Promise<void>;
   onBuildProgress: (callback: (data: string) => void) => () => void;
+  onTriggerBuild: (callback: () => void) => () => void;
+  readCatalog: (dirPath: string) => Promise<{ success: boolean; catalog: CatalogData | null; error?: string }>;
+  listSourceFiles: (dirPath: string) => Promise<{ success: boolean; files: string[]; error?: string }>;
 }
 
 // Build System Types
@@ -183,11 +213,65 @@ export interface ManifestInfo {
   name: string;
   path: string;
   fileName: string;
+  title: string;
+  template: string;
+  style?: string;
+  output: string[];
+  sections: string[];
+  sectionCount: number;
 }
 
 export interface TemplateInfo {
   name: string;
-  path: string;
+  path?: string;
+  description?: string;
+  type?: string;
+  styles?: string[];
+  features?: string[];
+}
+
+export interface TemplateBundleInfo {
+  pandoc?: { pdf?: string; docx?: string };
+  'python-docx'?: { docx?: string };
+}
+
+export interface CatalogData {
+  templates: Record<string, {
+    description: string;
+    type: string;
+    styles?: string[];
+    features?: string[];
+    preview?: string;
+    bundle?: TemplateBundleInfo;
+  }>;
+  common_params?: Record<string, unknown>;
+}
+
+export interface DocxDirectConfig {
+  'anchor-heading'?: string;
+  'chapter-prefix'?: string | null;
+  'crossref-mode'?: 'seq' | 'text';
+  'first-line-indent'?: number;
+  'page-break-before-h2'?: boolean;
+}
+
+export interface ManifestData {
+  title: string;
+  subtitle?: string;
+  author?: string | string[];
+  date?: string;
+  template: string;
+  style?: string;
+  output: string[];
+  sections: string[];
+  lang?: string;
+  toc?: boolean;
+  organization?: string;
+  version?: string;
+  abstract?: string;
+  'docx-engine'?: 'pandoc' | 'python-docx';
+  'docx-direct'?: DocxDirectConfig;
+  [key: string]: unknown;
 }
 
 export interface BuildResult {
@@ -202,6 +286,8 @@ export interface DependencyStatus {
   python3: boolean;
   pandoc: boolean;
   xelatex: boolean;
+  'python-docx'?: boolean;
+  lxml?: boolean;
 }
 
 export interface ProjectDetectionResult {

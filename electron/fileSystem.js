@@ -8,6 +8,8 @@ const ANNOTATION_BACKUP_DIR = 'annotation-backups';
 const MARGINALIA_EXT = '.mrgl';
 const BACKUP_EXT = '.bak';
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown'];
+const HIDDEN_EXTENSIONS = ['.mrgl', '.bak', '.DS_Store'];
+const HIDDEN_DIRS = ['node_modules', '.git', '.marginalia', '__pycache__', '.venv', 'venv'];
 const MAX_BACKUPS = 20; // 保持するバックアップの最大数
 
 // ---------------------------------------------------------------------------
@@ -18,7 +20,8 @@ const MAX_BACKUPS = 20; // 保持するバックアップの最大数
  * ディレクトリを再帰的に読み込み、Markdownファイルのみをフィルタリング
  * 各ファイルに annotationCount（注釈件数）を付与
  */
-async function readDirectory(dirPath, relativePath = '') {
+async function readDirectory(dirPath, relativePath = '', options = {}) {
+  const { showHidden = false } = options;
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const result = [];
 
@@ -26,14 +29,14 @@ async function readDirectory(dirPath, relativePath = '') {
   const annotationCounts = await scanAnnotationCounts(dirPath);
 
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
-    if (entry.name === 'node_modules') continue;
+    if (!showHidden && entry.name.startsWith('.')) continue;
+    if (HIDDEN_DIRS.includes(entry.name)) continue;
 
     const fullPath = path.join(dirPath, entry.name);
     const itemRelativePath = path.join(relativePath, entry.name);
 
     if (entry.isDirectory()) {
-      const children = await readDirectory(fullPath, itemRelativePath);
+      const children = await readDirectory(fullPath, itemRelativePath, options);
       if (children.length > 0) {
         result.push({
           name: entry.name,
@@ -45,16 +48,23 @@ async function readDirectory(dirPath, relativePath = '') {
       }
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).toLowerCase();
-      if (MARKDOWN_EXTENSIONS.includes(ext)) {
+      if (HIDDEN_EXTENSIONS.includes(ext)) continue;
+
+      const isMarkdown = MARKDOWN_EXTENSIONS.includes(ext);
+      const item = {
+        name: entry.name,
+        path: fullPath,
+        relativePath: itemRelativePath,
+        isDirectory: false,
+        extension: ext,
+      };
+
+      if (isMarkdown) {
         const stem = path.basename(entry.name, ext);
-        result.push({
-          name: entry.name,
-          path: fullPath,
-          relativePath: itemRelativePath,
-          isDirectory: false,
-          annotationCount: annotationCounts[stem] ?? 0,
-        });
+        item.annotationCount = annotationCounts[stem] ?? 0;
       }
+
+      result.push(item);
     }
   }
 

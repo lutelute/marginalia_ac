@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
-import type { ManifestInfo, TemplateInfo, BuildResult, DependencyStatus } from '../types';
+import type { ManifestInfo, TemplateInfo, BuildResult, DependencyStatus, ManifestData, CatalogData } from '../types';
+import { parseBibtex, type BibEntry } from '../codemirror/parsers/bibtex';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,7 +15,13 @@ interface BuildState {
   templates: TemplateInfo[];
   buildStatus: BuildStatus;
   buildResult: BuildResult | null;
+  buildLog: string[];
   dependencies: DependencyStatus | null;
+  selectedManifestPath: string | null;
+  manifestData: ManifestData | null;
+  catalog: CatalogData | null;
+  sourceFiles: string[];
+  bibEntries: BibEntry[];
 }
 
 type BuildAction =
@@ -25,12 +32,25 @@ type BuildAction =
   | { type: 'SET_DEPENDENCIES'; payload: DependencyStatus }
   | { type: 'BUILD_START' }
   | { type: 'BUILD_SUCCESS'; payload: BuildResult }
-  | { type: 'BUILD_ERROR'; payload: BuildResult };
+  | { type: 'BUILD_ERROR'; payload: BuildResult }
+  | { type: 'ADD_BUILD_LOG'; payload: string }
+  | { type: 'SELECT_MANIFEST'; payload: string }
+  | { type: 'SET_MANIFEST_DATA'; payload: ManifestData }
+  | { type: 'UPDATE_MANIFEST_DATA'; payload: ManifestData }
+  | { type: 'SET_CATALOG'; payload: CatalogData | null }
+  | { type: 'SET_SOURCE_FILES'; payload: string[] }
+  | { type: 'SET_BIB_ENTRIES'; payload: BibEntry[] }
+  | { type: 'CLEAR_MANIFEST' };
 
 interface BuildContextValue extends BuildState {
   detectProject: (dirPath: string) => Promise<void>;
   runBuild: (manifestPath: string, format: string) => Promise<void>;
   loadProjectData: (dirPath: string) => Promise<void>;
+  selectManifest: (path: string) => Promise<void>;
+  updateManifestData: (data: ManifestData) => void;
+  saveManifest: (path: string, data: ManifestData) => Promise<boolean>;
+  clearManifest: () => void;
+  refreshFromDisk: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +64,13 @@ const initialState: BuildState = {
   templates: [],
   buildStatus: 'idle',
   buildResult: null,
+  buildLog: [],
   dependencies: null,
+  selectedManifestPath: null,
+  manifestData: null,
+  catalog: null,
+  sourceFiles: [],
+  bibEntries: [],
 };
 
 function buildReducer(state: BuildState, action: BuildAction): BuildState {
@@ -69,13 +95,37 @@ function buildReducer(state: BuildState, action: BuildAction): BuildState {
       return { ...state, dependencies: action.payload };
 
     case 'BUILD_START':
-      return { ...state, buildStatus: 'building', buildResult: null };
+      return { ...state, buildStatus: 'building', buildResult: null, buildLog: [] };
 
     case 'BUILD_SUCCESS':
       return { ...state, buildStatus: 'success', buildResult: action.payload };
 
     case 'BUILD_ERROR':
       return { ...state, buildStatus: 'error', buildResult: action.payload };
+
+    case 'ADD_BUILD_LOG':
+      return { ...state, buildLog: [...state.buildLog, action.payload] };
+
+    case 'SELECT_MANIFEST':
+      return { ...state, selectedManifestPath: action.payload };
+
+    case 'SET_MANIFEST_DATA':
+      return { ...state, manifestData: action.payload };
+
+    case 'UPDATE_MANIFEST_DATA':
+      return { ...state, manifestData: action.payload };
+
+    case 'SET_CATALOG':
+      return { ...state, catalog: action.payload };
+
+    case 'SET_SOURCE_FILES':
+      return { ...state, sourceFiles: action.payload };
+
+    case 'SET_BIB_ENTRIES':
+      return { ...state, bibEntries: action.payload };
+
+    case 'CLEAR_MANIFEST':
+      return { ...state, selectedManifestPath: null, manifestData: null };
 
     default:
       return state;
@@ -105,9 +155,13 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
 
   const loadProjectData = useCallback(async (dirPath: string) => {
     try {
-      const [manifestsResult, templatesResult] = await Promise.all([
+      const [manifestsResult, templatesResult, catalogResult, sourceFilesResult, bibResult, deps] = await Promise.all([
         window.electronAPI.listManifests(dirPath),
         window.electronAPI.listTemplates(dirPath),
+        window.electronAPI.readCatalog(dirPath),
+        window.electronAPI.listSourceFiles(dirPath),
+        window.electronAPI.listBibFiles(dirPath),
+        window.electronAPI.checkDependencies?.() ?? Promise.resolve(null),
       ]);
 
       if (manifestsResult.success) {
@@ -116,13 +170,77 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
       if (templatesResult.success) {
         dispatch({ type: 'SET_TEMPLATES', payload: templatesResult.templates });
       }
+      if (catalogResult.success) {
+        dispatch({ type: 'SET_CATALOG', payload: catalogResult.catalog });
+      }
+      if (sourceFilesResult.success) {
+        dispatch({ type: 'SET_SOURCE_FILES', payload: sourceFilesResult.files });
+      }
+      if (bibResult.success && bibResult.files.length > 0) {
+        const allEntries: BibEntry[] = [];
+        for (const bibFile of bibResult.files) {
+          allEntries.push(...parseBibtex(bibFile.content));
+        }
+        dispatch({ type: 'SET_BIB_ENTRIES', payload: allEntries });
+      }
+      if (deps) {
+        dispatch({ type: 'SET_DEPENDENCIES', payload: deps });
+      }
     } catch (error) {
       console.error('Failed to load project data:', error);
     }
   }, []);
 
+  const selectManifest = useCallback(async (path: string) => {
+    dispatch({ type: 'SELECT_MANIFEST', payload: path });
+    try {
+      const result = await window.electronAPI.readManifest(path);
+      if (result.success && result.data) {
+        dispatch({ type: 'SET_MANIFEST_DATA', payload: result.data as unknown as ManifestData });
+      }
+    } catch (error) {
+      console.error('Failed to read manifest:', error);
+    }
+  }, []);
+
+  const updateManifestData = useCallback((data: ManifestData) => {
+    dispatch({ type: 'UPDATE_MANIFEST_DATA', payload: data });
+  }, []);
+
+  const saveManifest = useCallback(async (path: string, data: ManifestData): Promise<boolean> => {
+    try {
+      const result = await window.electronAPI.writeManifest(path, data as unknown as Record<string, unknown>);
+      if (result.success && state.projectDir) {
+        await loadProjectData(state.projectDir);
+      }
+      return result.success;
+    } catch (error) {
+      console.error('Failed to save manifest:', error);
+      return false;
+    }
+  }, [state.projectDir, loadProjectData]);
+
+  const clearManifest = useCallback(() => {
+    dispatch({ type: 'CLEAR_MANIFEST' });
+  }, []);
+
+  const refreshFromDisk = useCallback(() => {
+    if (state.projectDir) {
+      loadProjectData(state.projectDir);
+    }
+  }, [state.projectDir, loadProjectData]);
+
   const runBuild = useCallback(async (manifestPath: string, format: string) => {
     if (!state.projectDir) return;
+
+    // ビルド対象マニフェストが選択中でメモリ上に変更がある場合、自動保存
+    if (state.selectedManifestPath === manifestPath && state.manifestData) {
+      const saved = await saveManifest(manifestPath, state.manifestData);
+      if (!saved) {
+        dispatch({ type: 'BUILD_ERROR', payload: { success: false, error: 'マニフェスト保存失敗' } });
+        return;
+      }
+    }
 
     dispatch({ type: 'BUILD_START' });
 
@@ -139,7 +257,7 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
         payload: { success: false, error: error.message },
       });
     }
-  }, [state.projectDir]);
+  }, [state.projectDir, state.selectedManifestPath, state.manifestData, saveManifest]);
 
   // rootPath 変更時にプロジェクト検出
   useEffect(() => {
@@ -161,16 +279,35 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
   useEffect(() => {
     if (!window.electronAPI?.onBuildProgress) return;
     const cleanup = window.electronAPI.onBuildProgress((data) => {
-      console.log('[build]', data);
+      const lines = data.trim().split('\n').filter((l: string) => l.length > 0);
+      for (const line of lines) {
+        dispatch({ type: 'ADD_BUILD_LOG', payload: line });
+      }
     });
     return cleanup;
   }, []);
+
+  // ⌘+Shift+B ビルドショートカット
+  useEffect(() => {
+    if (!window.electronAPI?.onTriggerBuild) return;
+    const cleanup = window.electronAPI.onTriggerBuild(() => {
+      if (state.selectedManifestPath && state.manifestData?.output?.length) {
+        runBuild(state.selectedManifestPath, state.manifestData.output[0]);
+      }
+    });
+    return cleanup;
+  }, [state.selectedManifestPath, state.manifestData, runBuild]);
 
   const value: BuildContextValue = {
     ...state,
     detectProject,
     runBuild,
     loadProjectData,
+    selectManifest,
+    updateManifestData,
+    saveManifest,
+    clearManifest,
+    refreshFromDisk,
   };
 
   return <BuildContext.Provider value={value}>{children}</BuildContext.Provider>;

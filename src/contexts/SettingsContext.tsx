@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS = {
     autoSaveInterval: 30000, // 30秒
     showMinimap: true, // ミニマップ表示
     scrollSync: true, // スクロール同期
+    showToolbar: false, // 編集ツールバー表示（デフォルト非表示）
   },
 
   // プレビュー設定
@@ -61,6 +62,11 @@ const DEFAULT_SETTINGS = {
     enableDevTools: true,
     verboseLogging: false,
     showDebugInfo: false,
+  },
+
+  // ファイル表示設定
+  files: {
+    showHiddenFiles: false,
   },
 };
 

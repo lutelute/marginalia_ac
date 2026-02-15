@@ -18,6 +18,11 @@ import { anchorAnnotation, getAnnotationExactText, createAnnotationTarget } from
 
 // --- State ---
 
+interface AnnotationCacheEntry {
+  annotations: AnnotationV2[];
+  history: HistoryEntryV2[];
+}
+
 interface AnnotationState {
   annotations: AnnotationV2[];
   history: HistoryEntryV2[];
@@ -26,6 +31,7 @@ interface AnnotationState {
   pendingSelection: PendingSelectionV2 | null;
   scrollToLine: { line: number; annotationId: string } | null;
   documentText: string;
+  annotationCache: Record<string, AnnotationCacheEntry>;
 }
 
 const initialState: AnnotationState = {
@@ -36,6 +42,7 @@ const initialState: AnnotationState = {
   pendingSelection: null,
   scrollToLine: null,
   documentText: '',
+  annotationCache: {},
 };
 
 // --- Actions ---
@@ -54,7 +61,9 @@ type AnnotationAction =
   | { type: 'SET_DOCUMENT_TEXT'; payload: string }
   | { type: 'UPDATE_ANNOTATION_STATUS'; payload: { id: string; status: AnnotationStatus } }
   | { type: 'BULK_UPDATE_STATUS'; payload: { ids: string[]; status: AnnotationStatus } }
-  | { type: 'REASSIGN_ANNOTATION'; payload: { id: string; newSelectors: AnnotationSelector[] } };
+  | { type: 'REASSIGN_ANNOTATION'; payload: { id: string; newSelectors: AnnotationSelector[] } }
+  | { type: 'CACHE_ANNOTATIONS'; payload: { filePath: string; annotations: AnnotationV2[]; history: HistoryEntryV2[] } }
+  | { type: 'EVICT_ANNOTATION_CACHE'; payload: string };
 
 // --- Reducer ---
 
@@ -166,6 +175,27 @@ function annotationReducer(state: AnnotationState, action: AnnotationAction): An
         ),
       };
 
+    case 'CACHE_ANNOTATIONS':
+      return {
+        ...state,
+        annotationCache: {
+          ...state.annotationCache,
+          [action.payload.filePath]: {
+            annotations: action.payload.annotations,
+            history: action.payload.history,
+          },
+        },
+      };
+
+    case 'EVICT_ANNOTATION_CACHE':
+      {
+        const { [action.payload]: _, ...rest } = state.annotationCache;
+        return {
+          ...state,
+          annotationCache: rest,
+        };
+      }
+
     default:
       return state;
   }
@@ -179,10 +209,44 @@ export function AnnotationProvider({ children }: { children: React.ReactNode }) 
   const [state, dispatch] = useReducer(annotationReducer, initialState);
   const { currentFile, content } = useFile();
 
-  // ファイル変更時にMarginaliaデータをロード
+  // ファイル変更時: 現在のデータをキャッシュに保存してから切替
+  const prevFileRef = React.useRef<string | null>(null);
+
   useEffect(() => {
+    // 前のファイルの注釈をキャッシュに保存
+    if (prevFileRef.current && prevFileRef.current !== currentFile && state.annotations.length > 0) {
+      dispatch({
+        type: 'CACHE_ANNOTATIONS',
+        payload: {
+          filePath: prevFileRef.current,
+          annotations: state.annotations,
+          history: state.history,
+        },
+      });
+    }
+    prevFileRef.current = currentFile;
+
     if (!currentFile) {
       dispatch({ type: 'CLEAR' });
+      return;
+    }
+
+    // YAML ファイルの場合は注釈読み込みをスキップ
+    if (/\.ya?ml$/i.test(currentFile)) {
+      dispatch({ type: 'LOAD_DATA', payload: { annotations: [], history: [] } });
+      return;
+    }
+
+    // キャッシュにあればディスク読み込みスキップ
+    if (state.annotationCache[currentFile]) {
+      const cached = state.annotationCache[currentFile];
+      dispatch({
+        type: 'LOAD_DATA',
+        payload: {
+          annotations: cached.annotations,
+          history: cached.history,
+        },
+      });
       return;
     }
 
@@ -209,6 +273,12 @@ export function AnnotationProvider({ children }: { children: React.ReactNode }) 
             },
           });
         }
+      } else {
+        // ファイルに .marginalia がない場合はクリア
+        dispatch({
+          type: 'LOAD_DATA',
+          payload: { annotations: [], history: [] },
+        });
       }
     };
 
@@ -232,10 +302,19 @@ export function AnnotationProvider({ children }: { children: React.ReactNode }) 
     await window.electronAPI.writeMarginalia(currentFile, data);
   }, [currentFile, state.annotations, state.history]);
 
-  // annotations/history変更時に保存
+  // annotations/history変更時に保存 + キャッシュ更新
   useEffect(() => {
     if (currentFile && !state.isLoading) {
       saveMarginalia();
+      // キャッシュも更新
+      dispatch({
+        type: 'CACHE_ANNOTATIONS',
+        payload: {
+          filePath: currentFile,
+          annotations: state.annotations,
+          history: state.history,
+        },
+      });
     }
   }, [state.annotations, state.history, currentFile, state.isLoading, saveMarginalia]);
 
@@ -344,6 +423,10 @@ export function AnnotationProvider({ children }: { children: React.ReactNode }) 
 
   const setDocumentText = useCallback((text: string) => {
     dispatch({ type: 'SET_DOCUMENT_TEXT', payload: text });
+  }, []);
+
+  const clearAnnotationCache = useCallback((filePath: string) => {
+    dispatch({ type: 'EVICT_ANNOTATION_CACHE', payload: filePath });
   }, []);
 
   const setAnnotationStatus = useCallback((id: string, status: AnnotationStatus) => {
@@ -501,6 +584,8 @@ export function AnnotationProvider({ children }: { children: React.ReactNode }) 
     keepAnnotation,
     reassignAnnotation,
     detectOrphanedAnnotations,
+    clearAnnotationCache,
+    annotationCache: state.annotationCache,
     orphanedAnnotations,
     keptAnnotations,
     activeAnnotations,

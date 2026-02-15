@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "cross-env NODE_ENV=development concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "dev:electron": "wait-on http://localhost:5190 && cross-env NODE_ENV=development electron .",
     "build": "vite build",
     "build:prod": "cross-env NODE_ENV=production vite build",
     "preview": "vite preview",
@@ -16,7 +16,8 @@
     "package:mac": "electron-builder --mac --publish never",
     "package:win": "electron-builder --win --publish never",
     "package:linux": "electron-builder --linux --publish never",
-    "publish:mac": "npm run build:prod && electron-builder --mac --publish always"
+    "publish:mac": "npm run build:prod && electron-builder --mac --publish always",
+    "postinstall": "electron-rebuild"
   },
   "keywords": [
     "markdown",
@@ -30,6 +31,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
     "@types/node": "^25.2.0",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
@@ -52,6 +54,9 @@
       "dist/**/*",
       "electron/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
     ],
     "publish": {
       "provider": "github",
@@ -83,16 +88,24 @@
   },
   "dependencies": {
     "@annotorious/react": "^3.7.19",
+    "@codemirror/autocomplete": "^6.18.0",
     "@codemirror/lang-markdown": "^6.2.3",
+    "@codemirror/lang-yaml": "^6.1.2",
     "@codemirror/language-data": "^6.4.1",
+    "@codemirror/lint": "^6.9.3",
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.23.0",
     "@lezer/highlight": "^1.2.3",
     "@recogito/react-text-annotator": "^3.4.9",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
     "codemirror": "^6.0.1",
     "electron-updater": "^6.7.3",
     "js-yaml": "^4.1.1",
     "katex": "^0.16.28",
+    "mermaid": "^11.12.2",
+    "node-pty": "^1.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.1",

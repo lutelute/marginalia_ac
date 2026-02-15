@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, protocol } = require('electron');
 const path = require('path');
 const fileSystem = require('./fileSystem');
 const buildSystem = require('./buildSystem');
+const terminalManager = require('./terminalManager');
 const {
   checkForUpdates,
   downloadUpdate,
@@ -28,15 +29,134 @@ function createWindow() {
   });
 
   if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5190');
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 }
 
+// カスタムプロトコル登録（app.ready の前に呼ぶ必要がある）
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'local-file',
+  privileges: { bypassCSP: false, stream: true, supportFetchAPI: true }
+}]);
+
 app.whenReady().then(() => {
+  // local-file プロトコルハンドラ（ローカル画像表示用）
+  const mimeTypes = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
+    '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+    '.pdf': 'application/pdf',
+  };
+
+  protocol.handle('local-file', async (request) => {
+    const url = request.url.replace('local-file://', '');
+    const filePath = decodeURIComponent(url);
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = mimeTypes[ext] || 'application/octet-stream';
+
+    try {
+      const fs = require('fs');
+      const data = fs.readFileSync(filePath);
+      return new Response(data, {
+        headers: { 'Content-Type': mime }
+      });
+    } catch (e) {
+      return new Response('Not Found', { status: 404 });
+    }
+  });
+
   createWindow();
+
+  // Cmd+W でウィンドウを閉じず、アクティブタブを閉じるようにメニューを設定
+  const template = [
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Close Tab',
+          accelerator: 'CmdOrCtrl+W',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('close-active-tab');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'New Terminal',
+          accelerator: 'CmdOrCtrl+`',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('new-terminal');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Build',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('trigger-build');
+            }
+          },
+        },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 
   // 起動時に古いアップデートファイルをクリーンアップ
   startupCleanup();
@@ -54,6 +174,11 @@ app.on('window-all-closed', () => {
   }
 });
 
+// アプリ終了時にすべてのターミナルセッションを破棄
+app.on('will-quit', () => {
+  terminalManager.destroyAll();
+});
+
 // IPC Handlers
 
 // フォルダ選択ダイアログ
@@ -66,8 +191,8 @@ ipcMain.handle('dialog:openDirectory', async () => {
 });
 
 // ディレクトリ読み込み
-ipcMain.handle('fs:readDirectory', async (event, dirPath) => {
-  return await fileSystem.readDirectory(dirPath);
+ipcMain.handle('fs:readDirectory', async (event, dirPath, options) => {
+  return await fileSystem.readDirectory(dirPath, '', options);
 });
 
 // ファイル読み込み
@@ -192,7 +317,49 @@ ipcMain.handle('app:getVersion', () => {
   return app.getVersion();
 });
 
+// Terminal IPC Handlers
+
+ipcMain.handle('terminal:create', async (event, cwd) => {
+  const result = terminalManager.createSession(
+    cwd,
+    (sessionId, data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(`terminal:data-${sessionId}`, data);
+      }
+    },
+    (sessionId, exitCode, signal) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(`terminal:exit-${sessionId}`, exitCode, signal);
+      }
+    }
+  );
+  return result;
+});
+
+ipcMain.handle('terminal:write', async (event, sessionId, data) => {
+  terminalManager.writeToSession(sessionId, data);
+});
+
+ipcMain.handle('terminal:resize', async (event, sessionId, cols, rows) => {
+  terminalManager.resizeSession(sessionId, cols, rows);
+});
+
+ipcMain.handle('terminal:destroy', async (event, sessionId) => {
+  terminalManager.destroySession(sessionId);
+});
+
+// BibTeX IPC Handler
+
+ipcMain.handle('build:list-bib-files', async (event, dirPath) => {
+  return await buildSystem.listBibFiles(dirPath);
+});
+
 // Build System IPC Handlers
+
+// 依存関係チェック
+ipcMain.handle('build:check-dependencies', async () => {
+  return await buildSystem.checkDependencies();
+});
 
 // プロジェクト検出
 ipcMain.handle('build:detect-project', async (event, dirPath) => {
@@ -226,4 +393,40 @@ ipcMain.handle('build:write-manifest', async (event, manifestPath, data) => {
 // マニフェスト一覧
 ipcMain.handle('build:list-manifests', async (event, dirPath) => {
   return await buildSystem.listManifests(dirPath);
+});
+
+// テンプレートカタログ読み込み
+ipcMain.handle('build:read-catalog', async (event, dirPath) => {
+  return await buildSystem.readCatalog(dirPath);
+});
+
+// ソースファイル一覧
+ipcMain.handle('build:list-source-files', async (event, dirPath) => {
+  return await buildSystem.listSourceFiles(dirPath);
+});
+
+// ファイルをBase64として読み込み（PDF等バイナリ用）
+ipcMain.handle('fs:readFileAsBase64', async (event, filePath) => {
+  const fs = require('fs').promises;
+  const data = await fs.readFile(filePath);
+  return data.toString('base64');
+});
+
+// ファイルを外部アプリで開く
+ipcMain.handle('shell:openPath', async (event, filePath) => {
+  return await shell.openPath(filePath);
+});
+
+// PDF ビューアウィンドウを開く
+ipcMain.handle('shell:openPdfViewer', async (event, filePath) => {
+  const pdfWindow = new BrowserWindow({
+    width: 900,
+    height: 1100,
+    title: path.basename(filePath),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  pdfWindow.loadFile(filePath);
 });

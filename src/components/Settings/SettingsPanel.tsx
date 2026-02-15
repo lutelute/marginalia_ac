@@ -90,6 +90,17 @@ function SettingsPanel() {
           <div className="settings-content">
             {activeTab === 'general' && (
               <div className="settings-section">
+                <h3>ファイル表示</h3>
+                <div className="setting-item checkbox">
+                  <input
+                    type="checkbox"
+                    id="showHiddenFiles"
+                    checked={settings.files.showHiddenFiles}
+                    onChange={(e) => updateSettings('files.showHiddenFiles', e.target.checked)}
+                  />
+                  <label htmlFor="showHiddenFiles">隠しファイルを表示</label>
+                </div>
+
                 <h3>テーマ</h3>
                 <div className="setting-item">
                   <label>カラーテーマ</label>

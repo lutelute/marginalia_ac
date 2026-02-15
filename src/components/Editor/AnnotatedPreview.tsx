@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useCallback, useRef, useState, useEffect } from 'react';
+import React, { useLayoutEffect, useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -17,6 +17,8 @@ import { AnnotationV2, AnnotationType, AnnotationSelector } from '../../types/an
 import { ANNOTATION_TYPE_CONFIGS } from '../../constants/annotationTypes';
 import AnnotationHoverCard from '../Annotations/AnnotationHoverCard';
 import { setEditorScrollCallback, triggerEditorScroll, triggerScrollSync } from './MarkdownEditor';
+import FrontmatterCard from './FrontmatterCard';
+import MermaidBlock from './MermaidBlock';
 
 // ---------------------------------------------------------------------------
 // Rehype Preserve Positions Plugin
@@ -1175,6 +1177,46 @@ export default function AnnotatedPreview() {
     };
   }, []);
 
+  // Mermaid コードブロック intercept
+  const markdownComponents = useMemo(() => ({
+    code({ inline, className, children, ...props }: any) {
+      const match = /language-(\w+)/.exec(className || '');
+      if (!inline && match?.[1] === 'mermaid') {
+        return <MermaidBlock code={String(children).replace(/\n$/, '')} />;
+      }
+      return <code className={className} {...props}>{children}</code>;
+    },
+    img({ src, alt, ...props }: any) {
+      const resolvedSrc = (() => {
+        if (!src) return src;
+        // http/https/data URI はそのまま
+        if (/^(https?:|data:)/.test(src)) return src;
+        // currentFile の親ディレクトリから相対パスを解決
+        if (!currentFile) return src;
+        const dir = currentFile.substring(0, currentFile.lastIndexOf('/'));
+        const cleanSrc = src.replace(/^\.\//, '');
+        const absolutePath = dir + '/' + cleanSrc;
+        return 'local-file://' + absolutePath;
+      })();
+
+      return (
+        <img
+          src={resolvedSrc}
+          alt={alt}
+          onError={(e) => {
+            const target = e.currentTarget;
+            target.style.display = 'none';
+            const fallback = document.createElement('span');
+            fallback.style.cssText = 'display:inline-block;padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:4px;color:var(--text-muted);font-size:12px';
+            fallback.textContent = `🖼️ ${alt || src || '画像を読み込めません'}`;
+            target.parentNode?.insertBefore(fallback, target.nextSibling);
+          }}
+          {...props}
+        />
+      );
+    },
+  }), [currentFile]);
+
   if (!currentFile) {
     return (
       <div className="preview-empty">
@@ -1198,9 +1240,11 @@ export default function AnnotatedPreview() {
           onClick={handleClick}
           style={{ cursor: hoveredAnnotation ? 'pointer' : undefined, position: 'relative' }}
         >
+          <FrontmatterCard content={content} />
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={[rehypeRaw, rehypePreservePositions, rehypeKatex, rehypePreservePositions, rehypeSourceMap]}
+            components={markdownComponents}
           >
             {content}
           </ReactMarkdown>

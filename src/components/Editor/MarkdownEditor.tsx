@@ -1,14 +1,18 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { linter, lintGutter, Diagnostic } from '@codemirror/lint';
 import { tags } from '@lezer/highlight';
+import { Compartment } from '@codemirror/state';
 import { useFile } from '../../contexts/FileContext';
 import { useAnnotation } from '../../contexts/AnnotationContext';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useBuild } from '../../contexts/BuildContext';
+import { createMarkdownCompletions } from '../../codemirror/completions';
 import {
   annotationField,
   flashHighlightField,
@@ -102,11 +106,38 @@ const theme = EditorView.theme({
   '&.cm-focused .cm-selectionBackground': {
     backgroundColor: 'rgba(0, 120, 212, 0.5) !important',
   },
-  '.cm-cursor': {
+  '.cm-cursor, .cm-cursor-primary': {
     borderLeftColor: 'var(--accent-color)',
+    borderLeftWidth: '2px',
+  },
+  '&.cm-focused': {
+    outline: 'none',
   },
   '.cm-line': {
     padding: '0 16px',
+  },
+  // オートコンプリートパネルのスタイル
+  '.cm-tooltip-autocomplete': {
+    backgroundColor: 'var(--bg-secondary) !important',
+    border: '1px solid var(--border-color) !important',
+    borderRadius: '6px',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+  },
+  '.cm-tooltip-autocomplete ul li': {
+    color: 'var(--text-primary)',
+    padding: '2px 8px',
+  },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': {
+    backgroundColor: 'var(--accent-color) !important',
+    color: 'white',
+  },
+  '.cm-completionLabel': {
+    fontSize: '13px',
+  },
+  '.cm-completionDetail': {
+    fontSize: '11px',
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
   },
 });
 
@@ -116,6 +147,80 @@ const darkTheme = EditorView.theme({
     color: 'var(--text-primary)',
   },
 }, { dark: true });
+
+// Markdown Lint
+const markdownLinter = linter((view) => {
+  const diagnostics: Diagnostic[] = [];
+  const doc = view.state.doc;
+  const text = doc.toString();
+  const lines = text.split('\n');
+
+  let inCodeFence = false;
+  let codeFenceStart = -1;
+  let lastHeadingLevel = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trimStart();
+
+    // コードフェンス検出
+    if (trimmed.startsWith('```')) {
+      if (!inCodeFence) {
+        inCodeFence = true;
+        codeFenceStart = i;
+      } else {
+        inCodeFence = false;
+        codeFenceStart = -1;
+      }
+      continue;
+    }
+
+    // コードフェンス内はスキップ
+    if (inCodeFence) continue;
+
+    // 見出しレベルの飛び検出
+    const headingMatch = trimmed.match(/^(#{1,6})\s/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      if (lastHeadingLevel > 0 && level > lastHeadingLevel + 1) {
+        const docLine = doc.line(i + 1);
+        diagnostics.push({
+          from: docLine.from,
+          to: docLine.from + headingMatch[0].length,
+          severity: 'warning',
+          message: `見出しレベルが h${lastHeadingLevel} から h${level} に飛んでいます`,
+        });
+      }
+      lastHeadingLevel = level;
+    }
+
+    // 空リンク検出
+    const emptyLinkRe = /\[([^\]]*)\]\(\s*\)/g;
+    let match;
+    while ((match = emptyLinkRe.exec(line)) !== null) {
+      const docLine = doc.line(i + 1);
+      diagnostics.push({
+        from: docLine.from + match.index,
+        to: docLine.from + match.index + match[0].length,
+        severity: 'warning',
+        message: 'リンク先が空です',
+      });
+    }
+  }
+
+  // 閉じられていないコードフェンス
+  if (inCodeFence && codeFenceStart >= 0) {
+    const docLine = doc.line(codeFenceStart + 1);
+    diagnostics.push({
+      from: docLine.from,
+      to: docLine.to,
+      severity: 'error',
+      message: 'コードフェンスが閉じられていません',
+    });
+  }
+
+  return diagnostics;
+});
 
 // ツールバーのボタン定義
 const TOOLBAR_ITEMS = [
@@ -417,12 +522,16 @@ export function triggerScrollSync(line: number) {
   }
 }
 
-function MarkdownEditor() {
+// オートコンプリート用の Compartment (動的再設定用)
+const completionCompartment = new Compartment();
+
+function MarkdownEditor({ compact }: { compact?: boolean }) {
   const editorRef = useRef(null);
   const viewRef = useRef<EditorView | null>(null);
   const { content, currentFile, updateContent, saveFile, isModified, fileMetadata, loadFileMetadata } = useFile();
   const { setPendingSelection, annotations, scrollToLine, clearScrollToLine, addAnnotation, selectAnnotation, updateAnnotation, resolveAnnotation, deleteAnnotation, addReply, scrollToEditorLine } = useAnnotation();
   const { settings } = useSettings();
+  const { catalog, sourceFiles, bibEntries } = useBuild();
   const [showMetadata, setShowMetadata] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [editorSelection, setEditorSelection] = useState(null);
@@ -451,6 +560,22 @@ function MarkdownEditor() {
   useEffect(() => {
     scrollSyncEnabledRef.current = settings.editor.scrollSync ?? true;
   }, [settings.editor.scrollSync]);
+
+  // オートコンプリートデータが変わったら Compartment を再設定
+  useEffect(() => {
+    if (!viewRef.current) return;
+    viewRef.current.dispatch({
+      effects: completionCompartment.reconfigure(
+        createMarkdownCompletions({
+          catalog,
+          sourceFiles,
+          fileTree: sourceFiles,
+          bibEntries: bibEntries || [],
+          crossRefLabels: [],
+        })
+      ),
+    });
+  }, [catalog, sourceFiles, bibEntries]);
 
   // ファイルが変更されたらメタデータを読み込む
   useEffect(() => {
@@ -527,10 +652,11 @@ function MarkdownEditor() {
         lineNumbers(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
+        drawSelection({ cursorBlinkRate: 530 }),
         history(),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         syntaxHighlighting(markdownHighlightStyle),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
         theme,
         darkTheme,
         updateListener,
@@ -538,6 +664,17 @@ function MarkdownEditor() {
         // 注釈ハイライト用StateField
         annotationField,
         flashHighlightField,
+        // Markdown lint
+        markdownLinter,
+        lintGutter(),
+        // オートコンプリート
+        completionCompartment.of(createMarkdownCompletions({
+          catalog,
+          sourceFiles,
+          fileTree: sourceFiles,
+          bibEntries: bibEntries || [],
+          crossRefLabels: [],
+        })),
       ],
     });
 
@@ -1009,65 +1146,66 @@ ${styledMd}
 
   return (
     <div className="markdown-editor">
-      <div className="editor-header">
-        <div className="editor-header-left">
-          <span className="file-name">
-            {currentFile.split('/').pop()}
-            {isModified && <span className="modified-indicator">●</span>}
-          </span>
-          <button
-            className="metadata-btn"
-            onClick={() => setShowMetadata(!showMetadata)}
-            title="ファイル情報"
-          >
-            <InfoIcon />
-          </button>
-        </div>
-        <div className="editor-header-right">
-          <div className="export-menu-wrapper">
+      {!compact && (
+        <div className="editor-header compact-header">
+          <div className="editor-header-left">
             <button
-              className="export-btn"
-              onClick={() => setShowExportMenu(!showExportMenu)}
-              title="エクスポート"
+              className="metadata-btn"
+              onClick={() => setShowMetadata(!showMetadata)}
+              title="ファイル情報"
             >
-              ↓ エクスポート
+              <InfoIcon />
             </button>
-            {showExportMenu && (
-              <div className="export-menu">
-                <button onClick={() => handleExport('md')}>Markdown (.md)</button>
-                <button onClick={() => handleExport('md-styled')}>Markdown + 注釈</button>
-                <button onClick={() => handleExport('html')}>HTML</button>
-              </div>
-            )}
           </div>
-          <button
-            className="save-btn"
-            onClick={saveFile}
-            disabled={!isModified}
-          >
-            保存
-          </button>
-        </div>
-      </div>
-
-      {/* ツールバー */}
-      <div className="editor-toolbar">
-        {TOOLBAR_ITEMS.map((item, index) => {
-          if (item.id.startsWith('divider')) {
-            return <div key={item.id} className="toolbar-divider" />;
-          }
-          return (
+          <div className="editor-header-right">
+            <div className="export-menu-wrapper">
+              <button
+                className="export-btn"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                title="エクスポート"
+              >
+                ↓
+              </button>
+              {showExportMenu && (
+                <div className="export-menu">
+                  <button onClick={() => handleExport('md')}>Markdown (.md)</button>
+                  <button onClick={() => handleExport('md-styled')}>Markdown + 注釈</button>
+                  <button onClick={() => handleExport('html')}>HTML</button>
+                </div>
+              )}
+            </div>
             <button
-              key={item.id}
-              className="toolbar-btn"
-              onClick={() => applyFormat(item)}
-              title={item.label + (item.shortcut ? ` (${item.shortcut})` : '')}
+              className="save-btn"
+              onClick={saveFile}
+              disabled={!isModified}
+              title="保存 (⌘S)"
             >
-              {item.icon}
+              {isModified ? '● 保存' : '保存'}
             </button>
-          );
-        })}
-      </div>
+          </div>
+        </div>
+      )}
+
+      {/* ツールバー（settings.editor.showToolbar で制御） */}
+      {!compact && settings.editor.showToolbar && (
+        <div className="editor-toolbar">
+          {TOOLBAR_ITEMS.map((item, index) => {
+            if (item.id.startsWith('divider')) {
+              return <div key={item.id} className="toolbar-divider" />;
+            }
+            return (
+              <button
+                key={item.id}
+                className="toolbar-btn"
+                onClick={() => applyFormat(item)}
+                title={item.label + (item.shortcut ? ` (${item.shortcut})` : '')}
+              >
+                {item.icon}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* メタデータポップアップ */}
       {showMetadata && fileMetadata && (
@@ -1194,6 +1332,11 @@ ${styledMd}
           background-color: var(--bg-secondary);
           border-bottom: 1px solid var(--border-color);
           flex-shrink: 0;
+        }
+
+        .editor-header.compact-header {
+          padding: 2px 8px;
+          background-color: var(--bg-tertiary);
         }
 
         .editor-header-left {

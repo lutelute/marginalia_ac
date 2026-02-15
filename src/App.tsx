@@ -4,14 +4,14 @@ import { AnnotationProvider, useAnnotation } from './contexts/AnnotationContext'
 import { SettingsProvider, useSettings } from './contexts/SettingsContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { BuildProvider, useBuild } from './contexts/BuildContext';
+import { TabProvider, useTab } from './contexts/TabContext';
+import { TerminalProvider } from './contexts/TerminalContext';
 import { useFile } from './contexts/FileContext';
 import FileTree from './components/Sidebar/FileTree';
 import ProjectPanel from './components/Sidebar/ProjectPanel';
-import MarkdownEditor from './components/Editor/MarkdownEditor';
-import AnnotatedPreview from './components/Editor/AnnotatedPreview';
+import EditorArea from './components/Editor/EditorArea';
 import AnnotationPanel from './components/Annotations/AnnotationPanel';
 import SettingsPanel from './components/Settings/SettingsPanel';
-import SplitPane from './components/common/SplitPane';
 import ToastContainer from './components/common/ToastContainer';
 import ExternalChangeWarning from './components/common/ExternalChangeWarning';
 
@@ -35,11 +35,40 @@ function MinimapIcon() {
   );
 }
 
+function ToolbarIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="18" height="4" rx="1" />
+      <line x1="7" y1="5" x2="7" y2="5" strokeLinecap="round" />
+      <line x1="10" y1="5" x2="10" y2="5" strokeLinecap="round" />
+      <line x1="13" y1="5" x2="13" y2="5" strokeLinecap="round" />
+      <rect x="3" y="10" width="18" height="11" rx="1" />
+    </svg>
+  );
+}
+
 function TopBar() {
   const { settings, updateSettings, openSettings, isDevelopment, effectiveTheme } = useSettings();
-  const { isSidebarOpen, editorMode, isAnnotationPanelOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel } = useAppState();
+  const { isSidebarOpen, isAnnotationPanelOpen, toggleSidebar, toggleAnnotationPanel } = useAppState();
+  const { activeTab, activeGroup, setTabMode } = useTab();
   const { annotations } = useAnnotation();
   const isDark = effectiveTheme === 'dark';
+
+  // アクティブタブの editorMode を取得（PDF/YAML タブではモード切替を無効化）
+  const editorMode = activeTab?.editorMode || 'split';
+  const isPdfTab = activeTab?.fileType === 'pdf';
+  const isYamlTab = activeTab?.fileType === 'yaml';
+  const isModeDisabled = isPdfTab || isYamlTab;
+  const setEditorMode = useCallback((mode: string) => {
+    if (activeTab && activeGroup && !isModeDisabled) {
+      setTabMode(activeTab.id, activeGroup.id, mode as any);
+    }
+  }, [activeTab, activeGroup, isModeDisabled, setTabMode]);
+
+  // ツールバートグル
+  const toggleToolbar = useCallback(() => {
+    updateSettings('editor.showToolbar', !settings.editor.showToolbar);
+  }, [settings.editor.showToolbar, updateSettings]);
 
   // スクロール同期トグル
   const toggleScrollSync = useCallback(() => {
@@ -107,11 +136,12 @@ function TopBar() {
             <SidebarIcon />
           </button>
         </div>
-        <div className="mode-toggle-group">
+        <div className={`mode-toggle-group ${isModeDisabled ? 'disabled' : ''}`}>
           <button
             className={`mode-toggle-btn ${editorMode === 'edit' ? 'active' : ''}`}
             onClick={() => setEditorMode('edit')}
             title="編集モード"
+            disabled={isModeDisabled}
           >
             <EditIcon />
             <span>Edit</span>
@@ -120,6 +150,7 @@ function TopBar() {
             className={`mode-toggle-btn ${editorMode === 'split' ? 'active' : ''}`}
             onClick={() => setEditorMode('split')}
             title="分割モード"
+            disabled={isModeDisabled}
           >
             <SplitIcon />
             <span>Split</span>
@@ -128,6 +159,7 @@ function TopBar() {
             className={`mode-toggle-btn ${editorMode === 'preview' ? 'active' : ''}`}
             onClick={() => setEditorMode('preview')}
             title="プレビューモード"
+            disabled={isModeDisabled}
           >
             <PreviewIcon />
             <span>Preview</span>
@@ -142,25 +174,36 @@ function TopBar() {
         )}
       </div>
       <div className="top-bar-right">
-        {/* スクロール同期・ミニマップトグル（splitモード時のみ表示） */}
-        {editorMode === 'split' && (
-          <div className="btn-group">
+        {/* 表示トグル群 */}
+        <div className="btn-group">
+          {activeTab && !isModeDisabled && editorMode !== 'preview' && (
             <button
-              className={`top-bar-btn icon-only ${settings.editor.scrollSync ? 'active' : ''}`}
-              onClick={toggleScrollSync}
-              title={settings.editor.scrollSync ? 'スクロール同期をオフ' : 'スクロール同期をオン'}
+              className={`top-bar-btn icon-only ${settings.editor.showToolbar ? 'active' : ''}`}
+              onClick={toggleToolbar}
+              title={settings.editor.showToolbar ? '編集ツールバーを非表示' : '編集ツールバーを表示'}
             >
-              <ScrollSyncIcon />
+              <ToolbarIcon />
             </button>
-            <button
-              className={`top-bar-btn icon-only ${settings.editor.showMinimap ? 'active' : ''}`}
-              onClick={toggleMinimap}
-              title={settings.editor.showMinimap ? 'ミニマップを非表示' : 'ミニマップを表示'}
-            >
-              <MinimapIcon />
-            </button>
-          </div>
-        )}
+          )}
+          {activeTab && editorMode === 'split' && (
+            <>
+              <button
+                className={`top-bar-btn icon-only ${settings.editor.scrollSync ? 'active' : ''}`}
+                onClick={toggleScrollSync}
+                title={settings.editor.scrollSync ? 'スクロール同期をオフ' : 'スクロール同期をオン'}
+              >
+                <ScrollSyncIcon />
+              </button>
+              <button
+                className={`top-bar-btn icon-only ${settings.editor.showMinimap ? 'active' : ''}`}
+                onClick={toggleMinimap}
+                title={settings.editor.showMinimap ? 'ミニマップを非表示' : 'ミニマップを表示'}
+              >
+                <MinimapIcon />
+              </button>
+            </>
+          )}
+        </div>
         <div className="btn-group">
           <button
             className={`top-bar-btn icon-only ${isAnnotationPanelOpen ? 'active' : ''}`}
@@ -408,6 +451,52 @@ function ResizeHandle({ onResize, position }) {
   );
 }
 
+function VerticalResizeHandle({ onResize }: { onResize: (ratio: number) => void }) {
+  const isDragging = useRef(false);
+  const parentRef = useRef<HTMLElement | null>(null);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    parentRef.current = (e.target as HTMLElement).parentElement;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !parentRef.current) return;
+      const parentRect = parentRef.current.getBoundingClientRect();
+      const ratio = ((e.clientY - parentRect.top) / parentRect.height) * 100;
+      onResize(ratio);
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      parentRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [onResize]);
+
+  return (
+    <div className="vertical-resize-handle" onMouseDown={handleMouseDown}>
+      <div className="vertical-resize-handle-bar" />
+    </div>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
 // アプリ全体の状態を管理するContext
 const AppStateContext = React.createContext(null);
 
@@ -425,7 +514,17 @@ function AppStateProvider({ children }) {
     const saved = localStorage.getItem('isAnnotationPanelOpen');
     return saved !== 'false';
   });
-  const [sidebarTab, setSidebarTabState] = useState<'files' | 'project'>('files');
+  const [explorerCollapsed, setExplorerCollapsed] = useState(() => {
+    return localStorage.getItem('explorerCollapsed') === 'true';
+  });
+  const [buildCollapsed, setBuildCollapsed] = useState(() => {
+    return localStorage.getItem('buildCollapsed') === 'true';
+  });
+  const [sidebarSplitRatio, setSidebarSplitRatioState] = useState(() => {
+    const saved = localStorage.getItem('sidebarSplitRatio');
+    return saved ? parseInt(saved, 10) : 75;
+  });
+  const [viewingPdf, setViewingPdfState] = useState<string | null>(null);
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((prev) => {
@@ -448,19 +547,46 @@ function AppStateProvider({ children }) {
     });
   }, []);
 
-  const setSidebarTab = useCallback((tab: 'files' | 'project') => {
-    setSidebarTabState(tab);
+  const toggleExplorer = useCallback(() => {
+    setExplorerCollapsed((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('explorerCollapsed', newValue.toString());
+      return newValue;
+    });
+  }, []);
+
+  const toggleBuild = useCallback(() => {
+    setBuildCollapsed((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('buildCollapsed', newValue.toString());
+      return newValue;
+    });
+  }, []);
+
+  const setSidebarSplitRatio = useCallback((ratio: number) => {
+    const clamped = Math.max(20, Math.min(80, ratio));
+    setSidebarSplitRatioState(clamped);
+    localStorage.setItem('sidebarSplitRatio', clamped.toString());
+  }, []);
+
+  const setViewingPdf = useCallback((path: string | null) => {
+    setViewingPdfState(path);
   }, []);
 
   return (
-    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, sidebarTab, toggleSidebar, setEditorMode, toggleAnnotationPanel, setSidebarTab }}>
+    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, sidebarSplitRatio, viewingPdf, toggleSidebar, setEditorMode, toggleAnnotationPanel, toggleExplorer, toggleBuild, setSidebarSplitRatio, setViewingPdf }}>
       {children}
     </AppStateContext.Provider>
   );
 }
 
-function useAppState() {
+export function useAppState() {
   return React.useContext(AppStateContext);
+}
+
+function FileProviderBridge({ children }: { children: React.ReactNode }) {
+  const { settings } = useSettings();
+  return <FileProvider showHiddenFiles={settings.files.showHiddenFiles}>{children}</FileProvider>;
 }
 
 function BuildProviderBridge({ children }: { children: React.ReactNode }) {
@@ -499,19 +625,23 @@ function App() {
     <SettingsProvider>
       <ToastProvider>
         <AppStateProvider>
-          <FileProvider>
+          <FileProviderBridge>
             <BuildProviderBridge>
             <AnnotationProvider>
-              <AppContent
-                sidebarWidth={sidebarWidth}
-                annotationWidth={annotationWidth}
-                handleSidebarResize={handleSidebarResize}
-                handleAnnotationResize={handleAnnotationResize}
-                appRef={appRef}
-              />
+              <TerminalProvider>
+              <TabProvider>
+                <AppContent
+                  sidebarWidth={sidebarWidth}
+                  annotationWidth={annotationWidth}
+                  handleSidebarResize={handleSidebarResize}
+                  handleAnnotationResize={handleAnnotationResize}
+                  appRef={appRef}
+                />
+              </TabProvider>
+              </TerminalProvider>
             </AnnotationProvider>
             </BuildProviderBridge>
-          </FileProvider>
+          </FileProviderBridge>
         </AppStateProvider>
       </ToastProvider>
     </SettingsProvider>
@@ -519,11 +649,26 @@ function App() {
 }
 
 function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
-  const { isSidebarOpen, editorMode, isAnnotationPanelOpen, sidebarTab, setSidebarTab } = useAppState();
-  const { isProject } = useBuild();
+  const { isSidebarOpen, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, sidebarSplitRatio, toggleExplorer, toggleBuild, setSidebarSplitRatio } = useAppState();
+  const { isProject, projectDir } = useBuild();
+  const { rootPath } = useFile();
+  const { activeTab, openTerminalTab } = useTab();
+  const editorMode = activeTab?.editorMode || 'split';
 
-  const showEditor = editorMode === 'edit' || editorMode === 'split';
-  const showPreview = editorMode === 'preview' || editorMode === 'split';
+  // ⌘+` で新規ターミナルを開く (メニューからの new-terminal イベント)
+  useEffect(() => {
+    if (!window.electronAPI?.onNewTerminal) return;
+    const cleanup = window.electronAPI.onNewTerminal(async () => {
+      try {
+        const cwd = rootPath || undefined;
+        const result = await window.electronAPI.terminalCreate(cwd);
+        openTerminalTab(result.sessionId);
+      } catch (e) {
+        console.error('Failed to create terminal:', e);
+      }
+    });
+    return cleanup;
+  }, [openTerminalTab, rootPath]);
 
   return (
     <>
@@ -535,40 +680,65 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             minWidth: isSidebarOpen ? 150 : 0,
           }}
         >
-          <div className="sidebar-tabs">
-            <button
-              className={`sidebar-tab ${sidebarTab === 'files' ? 'active' : ''}`}
-              onClick={() => setSidebarTab('files')}
-            >
-              <FileTabIcon />
-              <span>Files</span>
-            </button>
-            <button
-              className={`sidebar-tab ${sidebarTab === 'project' ? 'active' : ''} ${!isProject ? 'disabled' : ''}`}
-              onClick={() => isProject && setSidebarTab('project')}
-              disabled={!isProject}
-              title={!isProject ? 'プロジェクト未検出' : 'ビルド'}
-            >
-              <BuildTabIcon />
-              <span>Build</span>
-            </button>
+          {/* Explorer セクション */}
+          <div
+            className="sidebar-section"
+            style={{
+              flex: explorerCollapsed ? '0 0 auto' : (isProject && !buildCollapsed ? `0 0 ${sidebarSplitRatio}%` : '1 1 auto'),
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div className="sidebar-section-header" onClick={toggleExplorer}>
+              <span className={`sidebar-section-chevron ${explorerCollapsed ? 'collapsed' : ''}`}>
+                <ChevronDownIcon />
+              </span>
+              <span>EXPLORER</span>
+            </div>
+            {!explorerCollapsed && (
+              <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                <FileTree />
+              </div>
+            )}
           </div>
-          {sidebarTab === 'files' ? <FileTree /> : <ProjectPanel />}
+
+          {/* 縦リサイズハンドル（両セクション展開時、かつプロジェクト検出時のみ） */}
+          {isProject && !explorerCollapsed && !buildCollapsed && (
+            <VerticalResizeHandle onResize={setSidebarSplitRatio} />
+          )}
+
+          {/* Build セクション（プロジェクト検出時のみ） */}
+          {isProject && (
+            <div
+              className="sidebar-section"
+              style={{
+                flex: buildCollapsed ? '0 0 auto' : (!explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` : '1 1 auto'),
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              <div className="sidebar-section-header" onClick={toggleBuild}>
+                <span className={`sidebar-section-chevron ${buildCollapsed ? 'collapsed' : ''}`}>
+                  <ChevronDownIcon />
+                </span>
+                <span>BUILD</span>
+              </div>
+              {!buildCollapsed && (
+                <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                  <ProjectPanel />
+                </div>
+              )}
+            </div>
+          )}
         </div>
         {isSidebarOpen && <ResizeHandle onResize={handleSidebarResize} position="left" />}
 
         <div className={`main-content editor-mode-${editorMode}`}>
-          {editorMode === 'split' ? (
-            <SplitPane
-              left={<MarkdownEditor />}
-              right={<AnnotatedPreview />}
-              initialLeftWidth={50}
-            />
-          ) : editorMode === 'edit' ? (
-            <MarkdownEditor />
-          ) : (
-            <AnnotatedPreview />
-          )}
+          <EditorArea />
         </div>
 
         {isAnnotationPanelOpen && <ResizeHandle onResize={handleAnnotationResize} position="right" />}
@@ -705,6 +875,11 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             font-weight: 500;
           }
 
+          .mode-toggle-group.disabled {
+            opacity: 0.4;
+            pointer-events: none;
+          }
+
           .mode-toggle-btn:hover {
             background-color: var(--bg-hover);
             color: var(--text-primary);
@@ -826,42 +1001,64 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             flex-direction: column;
           }
 
-          .sidebar-tabs {
+          .sidebar-section-header {
             display: flex;
-            border-bottom: 1px solid var(--border-color);
+            align-items: center;
+            gap: 4px;
+            padding: 6px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
             flex-shrink: 0;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-secondary);
           }
 
-          .sidebar-tab {
-            flex: 1;
+          .sidebar-section-header:hover {
+            color: var(--text-primary);
+            background: var(--bg-hover);
+          }
+
+          .sidebar-section-chevron {
+            display: flex;
+            align-items: center;
+            transition: transform 0.15s ease;
+          }
+
+          .sidebar-section-chevron.collapsed {
+            transform: rotate(-90deg);
+          }
+
+          .vertical-resize-handle {
+            height: 4px;
+            cursor: row-resize;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 4px;
-            padding: 6px 8px;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--text-muted);
-            font-size: 11px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s ease;
+            flex-shrink: 0;
+            background-color: transparent;
+            transition: background-color 0.2s;
           }
 
-          .sidebar-tab:hover:not(.disabled) {
-            color: var(--text-primary);
-            background-color: var(--bg-hover);
+          .vertical-resize-handle:hover {
+            background-color: var(--accent-color);
           }
 
-          .sidebar-tab.active {
-            color: var(--accent-color);
-            border-bottom-color: var(--accent-color);
+          .vertical-resize-handle-bar {
+            width: 40px;
+            height: 2px;
+            background-color: var(--border-color);
+            border-radius: 2px;
+            transition: all 0.2s;
           }
 
-          .sidebar-tab.disabled {
-            opacity: 0.35;
-            cursor: not-allowed;
+          .vertical-resize-handle:hover .vertical-resize-handle-bar {
+            width: 60px;
+            background-color: white;
           }
 
           .sidebar.closed {

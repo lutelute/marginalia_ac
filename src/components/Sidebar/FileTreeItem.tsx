@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useFile } from '../../contexts/FileContext';
+import { useTab } from '../../contexts/TabContext';
 
 function FileTreeItem({ item, depth }) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -7,7 +8,8 @@ function FileTreeItem({ item, depth }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const { currentFile, openFile, renameFileWithAnnotations, moveFileWithAnnotations, rootPath } = useFile();
+  const { currentFile, renameFileWithAnnotations, moveFileWithAnnotations, rootPath } = useFile();
+  const { openTab, updateTabPath, removeTabsByPath } = useTab();
 
   const isActive = currentFile === item.path;
   const paddingLeft = 12 + depth * 16;
@@ -16,9 +18,11 @@ function FileTreeItem({ item, depth }) {
     if (item.isDirectory) {
       setIsExpanded(!isExpanded);
     } else {
-      openFile(item.path);
+      openTab(item.path);
     }
   };
+
+  const isMarkdown = !item.isDirectory && /\.(md|markdown)$/i.test(item.name);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     if (item.isDirectory) return;
@@ -59,10 +63,12 @@ function FileTreeItem({ item, depth }) {
     if (!trimmed || trimmed === item.name) return;
 
     const result = await renameFileWithAnnotations(item.path, trimmed);
-    if (!result.success) {
+    if (result.success && result.newPath) {
+      updateTabPath(item.path, result.newPath, trimmed);
+    } else if (!result.success) {
       alert(result.error);
     }
-  }, [renameValue, item.name, item.path, renameFileWithAnnotations]);
+  }, [renameValue, item.name, item.path, renameFileWithAnnotations, updateTabPath]);
 
   // 移動ダイアログ
   const handleMove = useCallback(async () => {
@@ -72,15 +78,19 @@ function FileTreeItem({ item, depth }) {
 
     const newPath = destDir + '/' + item.name;
     const result = await moveFileWithAnnotations(item.path, newPath);
-    if (!result.success) {
+    if (result.success && result.newPath) {
+      updateTabPath(item.path, result.newPath, item.name);
+    } else if (!result.success) {
       alert(result.error);
     }
-  }, [item.path, item.name, moveFileWithAnnotations]);
+  }, [item.path, item.name, moveFileWithAnnotations, updateTabPath]);
+
+  const isHidden = item.isHidden;
 
   return (
     <li className="file-tree-item">
       <div
-        className={`file-tree-item-row ${isActive ? 'active' : ''}`}
+        className={`file-tree-item-row ${isActive ? 'active' : ''} ${isHidden ? 'file-tree-item-hidden' : ''} ${!item.isDirectory && !isMarkdown ? 'file-tree-item-secondary' : ''}`}
         style={{ paddingLeft }}
         onClick={isRenaming ? undefined : handleClick}
         onContextMenu={handleContextMenu}
@@ -95,7 +105,7 @@ function FileTreeItem({ item, depth }) {
         ) : (
           <>
             <span className="chevron-placeholder" />
-            <MarkdownIcon />
+            <FileIcon name={item.name} />
           </>
         )}
         {isRenaming ? (
@@ -168,6 +178,15 @@ function FileTreeItem({ item, depth }) {
 
         .file-tree-item-row.active {
           background-color: var(--bg-active);
+        }
+
+        .file-tree-item-hidden {
+          opacity: 0.5;
+          font-style: italic;
+        }
+
+        .file-tree-item-secondary .file-tree-item-name {
+          color: var(--text-secondary);
         }
 
         .chevron {
@@ -304,10 +323,39 @@ function FolderIcon() {
   );
 }
 
-function MarkdownIcon() {
+const FILE_ICON_COLORS: Record<string, string> = {
+  '.md': '#519aba', '.markdown': '#519aba',
+  '.yaml': '#cb4a32', '.yml': '#cb4a32',
+  '.json': '#cbcb41', '.jsonl': '#cbcb41',
+  '.js': '#cbcb41', '.ts': '#3178c6', '.tsx': '#3178c6', '.jsx': '#61dafb',
+  '.py': '#3572a5', '.sh': '#89e051', '.bash': '#89e051',
+  '.html': '#e34c26', '.css': '#563d7c', '.scss': '#c6538c',
+  '.tex': '#3d6117', '.bib': '#3d6117', '.cls': '#3d6117',
+  '.svg': '#ffb13b', '.xml': '#e86c00',
+  '.pdf': '#e5574f',
+  '.txt': '#8a8a8a', '.log': '#8a8a8a', '.csv': '#8a8a8a',
+  '.png': '#a074c4', '.jpg': '#a074c4', '.jpeg': '#a074c4', '.gif': '#a074c4', '.webp': '#a074c4',
+  '.toml': '#9c4121', '.ini': '#9c4121', '.cfg': '#9c4121',
+};
+
+function FileIcon({ name }: { name: string }) {
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  const color = FILE_ICON_COLORS[ext] || '#8a8a8a';
+
+  // Markdown 用の専用アイコン
+  if (ext === '.md' || ext === '.markdown') {
+    return (
+      <svg viewBox="0 0 24 24" fill={color} stroke="none">
+        <path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5zm4 4v6h2v-3l1.5 2 1.5-2v3h2v-6h-2l-1.5 2L9 9H7zm9 0v4h-1.5l2.5 2.5 2.5-2.5H18V9h-2z" />
+      </svg>
+    );
+  }
+
+  // 汎用ファイルアイコン
   return (
-    <svg viewBox="0 0 24 24" fill="#519aba" stroke="none">
-      <path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5zm4 4v6h2v-3l1.5 2 1.5-2v3h2v-6h-2l-1.5 2L9 9H7zm9 0v4h-1.5l2.5 2.5 2.5-2.5H18V9h-2z" />
+    <svg viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.5">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" fill={color} fillOpacity="0.15" />
+      <path d="M14 2v6h6" />
     </svg>
   );
 }

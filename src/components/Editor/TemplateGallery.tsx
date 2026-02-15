@@ -15,7 +15,7 @@ interface TemplateGalleryProps {
 type PreviewTab = 'pdf' | 'yaml' | 'md';
 
 function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow }: TemplateGalleryProps = {}) {
-  const { effectiveCatalog, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, createCustomTemplate, deleteCustomTemplate } = useBuild();
+  const { effectiveCatalog, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, createCustomTemplate, deleteCustomTemplate, defaultDemoData, defaultTemplateMap } = useBuild();
   const catalog = effectiveCatalog;
   const [previewTemplate, setPreviewTemplate] = useState<string | null>(null);
   const [previewTab, setPreviewTab] = useState<PreviewTab>('pdf');
@@ -48,25 +48,43 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
   const builtinCount = allTemplates.filter(([, t]) => t._source === 'builtin').length;
   const customCount = allTemplates.filter(([, t]) => t._source === 'custom').length;
 
+  // テンプレートに紐づくデモの stem を取得
+  const getDemoStem = useCallback((templateName: string) => {
+    const tmpl = catalog?.templates[templateName];
+    if (!tmpl) return null;
+    // preview フィールドから stem を導出
+    const previewFile = tmpl.preview; // e.g. "demo-report.pdf"
+    if (previewFile) return previewFile.replace(/\.[^/.]+$/, '');
+    // preview がなければ templateMap から取得
+    if (defaultTemplateMap?.[templateName]?.length) return defaultTemplateMap[templateName][0];
+    return null;
+  }, [catalog, defaultTemplateMap]);
+
+  // テンプレートのセクション数を取得
+  const getSectionCount = useCallback((templateName: string) => {
+    const stem = getDemoStem(templateName);
+    if (!stem) return 0;
+    // projectDir がある場合はファイルから後で確認
+    if (defaultDemoData?.[stem]) return defaultDemoData[stem].sections.length;
+    return 0;
+  }, [getDemoStem, defaultDemoData]);
+
   // プレビューモーダル展開時にYAML/MDデータをロード
   const loadPreviewData = useCallback(async (templateName: string) => {
-    if (!projectDir || !catalog?.templates[templateName]) return;
+    if (!catalog?.templates[templateName]) return;
     setPreviewLoading(true);
     setPreviewYaml(null);
     setPreviewMdSections([]);
 
-    const tmpl = catalog.templates[templateName];
-    // preview フィールドからデモマニフェストパスを導出
-    const previewFile = tmpl.preview; // e.g. "demo-report.pdf"
-    const stem = previewFile ? previewFile.replace(/\.[^/.]+$/, '') : null;
-    const manifestPath = stem ? `${projectDir}/projects/${stem}.yaml` : null;
+    const stem = getDemoStem(templateName);
 
-    try {
-      if (manifestPath) {
+    // 1) projectDir がある場合はファイルシステムから読み込み
+    if (projectDir && stem) {
+      const manifestPath = `${projectDir}/projects/${stem}.yaml`;
+      try {
         const yamlText = await window.electronAPI!.readFile(manifestPath);
         setPreviewYaml(yamlText);
 
-        // YAML から sections を抽出
         const sectionsMatch = yamlText.match(/^sections:\s*\n((?:\s+-\s+.+\n?)*)/m);
         if (sectionsMatch) {
           const sectionLines = sectionsMatch[1].match(/^\s+-\s+(.+)$/gm) || [];
@@ -84,13 +102,26 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
           }
           setPreviewMdSections(mdResults);
         }
+        setPreviewLoading(false);
+        return;
+      } catch {
+        // ファイルが無ければ fallback へ
       }
-    } catch {
-      // マニフェストファイルが存在しない場合は無視
-    } finally {
-      setPreviewLoading(false);
     }
-  }, [projectDir, catalog]);
+
+    // 2) defaultDemoData にフォールバック
+    if (stem && defaultDemoData?.[stem]) {
+      const demo = defaultDemoData[stem];
+      setPreviewYaml(demo.manifestYaml);
+      setPreviewMdSections(
+        demo.sections
+          .filter(s => s.content !== null)
+          .map(s => ({ name: s.name, content: s.content! }))
+      );
+    }
+
+    setPreviewLoading(false);
+  }, [projectDir, catalog, getDemoStem, defaultDemoData]);
 
   const handleExpandPreview = useCallback((name: string) => {
     if (previewTemplate === name) {
@@ -98,7 +129,7 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
       return;
     }
     setPreviewTemplate(name);
-    setPreviewTab('pdf');
+    setPreviewTab(projectDir ? 'pdf' : 'yaml');
     loadPreviewData(name);
   }, [previewTemplate, loadPreviewData]);
 
@@ -245,6 +276,18 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
                     </div>
                   )}
 
+                  {getSectionCount(name) > 0 && (
+                    <div className="tg-section-indicator">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                      </svg>
+                      <span>{getSectionCount(name)} .md sections</span>
+                    </div>
+                  )}
+
                   <div className="tg-card-actions">
                     <button
                       className="template-gallery-apply-btn"
@@ -319,7 +362,7 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
       )}
 
       {/* Expanded preview modal with tabs */}
-      {previewTemplate && projectDir && (
+      {previewTemplate && (
         <div className="template-gallery-modal" onClick={() => setPreviewTemplate(null)}>
           <div className="template-gallery-modal-content" onClick={e => e.stopPropagation()}>
             <div className="template-gallery-modal-header">
@@ -333,14 +376,16 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
             </div>
 
             {previewTab === 'pdf' && (
-              catalog.templates[previewTemplate]?.preview ? (
+              catalog.templates[previewTemplate]?.preview && projectDir ? (
                 <iframe
                   src={`local-file://${projectDir}/output/${catalog.templates[previewTemplate].preview}`}
                   title={previewTemplate}
                   className="template-gallery-modal-iframe"
                 />
               ) : (
-                <div className="tg-preview-empty">No Preview</div>
+                <div className="tg-preview-empty">
+                  {!projectDir ? 'PDF プレビューにはプロジェクトフォルダが必要です' : 'No Preview'}
+                </div>
               )
             )}
 
@@ -597,6 +642,18 @@ function TemplateGallery({ onApplyTemplate, onPopOut, onClose, isModal, isWindow
           border-radius: 3px;
           background: rgba(99, 102, 241, 0.1);
           color: var(--text-muted);
+        }
+        .tg-section-indicator {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 10px;
+          color: var(--text-muted);
+          margin-bottom: 6px;
+          padding: 3px 6px;
+          background: var(--bg-tertiary);
+          border-radius: 4px;
+          font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
         }
         .tg-card-actions {
           display: flex;

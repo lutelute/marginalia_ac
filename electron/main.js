@@ -457,6 +457,70 @@ ipcMain.handle('build:read-default-catalog', async () => {
   }
 });
 
+// デフォルトデモデータ読み込み（アプリ内蔵デモ YAML + MD）
+ipcMain.handle('build:read-default-demo-data', async () => {
+  try {
+    const yaml = require('js-yaml');
+    const fsSync = require('fs');
+
+    let baseDir;
+    if (app.isPackaged) {
+      baseDir = path.join(process.resourcesPath, 'report-build-system');
+    } else {
+      baseDir = path.join(__dirname, '..', 'report-build-system');
+    }
+
+    const projectsDir = path.join(baseDir, 'projects');
+    if (!fsSync.existsSync(projectsDir)) {
+      return { success: false, demoData: {}, templateMap: {} };
+    }
+
+    const demoData = {};      // stem -> { manifestYaml, sections[] }
+    const templateMap = {};    // templateName -> stem[]
+
+    const yamlFiles = fsSync.readdirSync(projectsDir)
+      .filter(f => (f.startsWith('demo-') || f.startsWith('example-')) && f.endsWith('.yaml'));
+
+    for (const yamlFile of yamlFiles) {
+      const stem = yamlFile.replace(/\.yaml$/, '');
+      const manifestPath = path.join(projectsDir, yamlFile);
+      const manifestYaml = fsSync.readFileSync(manifestPath, 'utf-8');
+
+      let parsed;
+      try {
+        parsed = yaml.load(manifestYaml);
+      } catch { continue; }
+
+      const sections = [];
+      if (parsed && Array.isArray(parsed.sections)) {
+        for (const sectionPath of parsed.sections) {
+          if (typeof sectionPath !== 'string') continue;
+          const fullPath = path.join(baseDir, sectionPath);
+          try {
+            const content = fsSync.readFileSync(fullPath, 'utf-8');
+            sections.push({ path: sectionPath, name: path.basename(sectionPath), content });
+          } catch {
+            sections.push({ path: sectionPath, name: path.basename(sectionPath), content: null });
+          }
+        }
+      }
+
+      demoData[stem] = { manifestYaml, sections };
+
+      // テンプレートマップ構築
+      const tmplName = parsed?.template;
+      if (tmplName) {
+        if (!templateMap[tmplName]) templateMap[tmplName] = [];
+        templateMap[tmplName].push(stem);
+      }
+    }
+
+    return { success: true, demoData, templateMap };
+  } catch (error) {
+    return { success: false, demoData: {}, templateMap: {}, error: error.message };
+  }
+});
+
 // ソースファイル一覧
 ipcMain.handle('build:list-source-files', async (event, dirPath) => {
   return await buildSystem.listSourceFiles(dirPath);

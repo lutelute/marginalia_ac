@@ -15,6 +15,7 @@ import SettingsPanel from './components/Settings/SettingsPanel';
 import ToastContainer from './components/common/ToastContainer';
 import ExternalChangeWarning from './components/common/ExternalChangeWarning';
 import TemplateGallery from './components/Editor/TemplateGallery';
+import SidebarGallery from './components/Sidebar/SidebarGallery';
 
 // ギャラリー専用ウィンドウモード判定
 const isGalleryWindow = new URLSearchParams(window.location.search).get('view') === 'gallery';
@@ -535,6 +536,9 @@ function AppStateProvider({ children }) {
   const [buildCollapsed, setBuildCollapsed] = useState(() => {
     return localStorage.getItem('buildCollapsed') === 'true';
   });
+  const [galleryCollapsed, setGalleryCollapsed] = useState(() => {
+    return localStorage.getItem('galleryCollapsed') === 'true';
+  });
   const [sidebarSplitRatio, setSidebarSplitRatioState] = useState(() => {
     const saved = localStorage.getItem('sidebarSplitRatio');
     return saved ? parseInt(saved, 10) : 75;
@@ -582,6 +586,14 @@ function AppStateProvider({ children }) {
     });
   }, []);
 
+  const toggleGallery = useCallback(() => {
+    setGalleryCollapsed((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('galleryCollapsed', newValue.toString());
+      return newValue;
+    });
+  }, []);
+
   const setSidebarSplitRatio = useCallback((ratio: number) => {
     const clamped = Math.max(20, Math.min(80, ratio));
     setSidebarSplitRatioState(clamped);
@@ -593,7 +605,7 @@ function AppStateProvider({ children }) {
   }, []);
 
   return (
-    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, sidebarSplitRatio, viewingPdf, isGalleryModalOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel, toggleExplorer, toggleBuild, setSidebarSplitRatio, setViewingPdf, openGalleryModal, closeGalleryModal }}>
+    <AppStateContext.Provider value={{ isSidebarOpen, editorMode, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, galleryCollapsed, sidebarSplitRatio, viewingPdf, isGalleryModalOpen, toggleSidebar, setEditorMode, toggleAnnotationPanel, toggleExplorer, toggleBuild, toggleGallery, setSidebarSplitRatio, setViewingPdf, openGalleryModal, closeGalleryModal }}>
       {children}
     </AppStateContext.Provider>
   );
@@ -802,7 +814,7 @@ function App() {
 }
 
 function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handleAnnotationResize, appRef }) {
-  const { isSidebarOpen, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, sidebarSplitRatio, toggleExplorer, toggleBuild, setSidebarSplitRatio, openGalleryModal } = useAppState();
+  const { isSidebarOpen, isAnnotationPanelOpen, explorerCollapsed, buildCollapsed, galleryCollapsed, sidebarSplitRatio, toggleExplorer, toggleBuild, toggleGallery, setSidebarSplitRatio, openGalleryModal } = useAppState();
   const { isProject, projectDir, manifestData, selectedManifestPath, updateManifestData, saveManifest, refreshFromDisk } = useBuild();
   const { rootPath } = useFile();
   const { activeTab, openTerminalTab } = useTab();
@@ -868,7 +880,7 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
           <div
             className="sidebar-section"
             style={{
-              flex: explorerCollapsed ? '0 0 auto' : (isProject && !buildCollapsed ? `0 0 ${sidebarSplitRatio}%` : '1 1 auto'),
+              flex: explorerCollapsed ? '0 0 auto' : (!buildCollapsed || !galleryCollapsed ? `0 0 ${sidebarSplitRatio}%` : '1 1 auto'),
               minHeight: 0,
               display: 'flex',
               flexDirection: 'column',
@@ -888,43 +900,82 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             )}
           </div>
 
-          {/* 縦リサイズハンドル（両セクション展開時、かつプロジェクト検出時のみ） */}
-          {isProject && !explorerCollapsed && !buildCollapsed && (
+          {/* 縦リサイズハンドル（EXPLORER とその下のセクションが展開時） */}
+          {!explorerCollapsed && (!buildCollapsed || !galleryCollapsed) && (
             <VerticalResizeHandle onResize={setSidebarSplitRatio} />
           )}
 
-          {/* Build セクション（プロジェクト検出時のみ） */}
-          {isProject && (
-            <div
-              className="sidebar-section"
-              style={{
-                flex: buildCollapsed ? '0 0 auto' : (!explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` : '1 1 auto'),
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}
-            >
-              <div className="sidebar-section-header" onClick={toggleBuild}>
-                <span className={`sidebar-section-chevron ${buildCollapsed ? 'collapsed' : ''}`}>
-                  <ChevronDownIcon />
-                </span>
-                <span>BUILD</span>
-              </div>
-              {!buildCollapsed && (
-                <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-                  <ProjectPanel />
-                </div>
-              )}
+          {/* Build セクション（常時表示） */}
+          <div
+            className="sidebar-section"
+            style={{
+              flex: buildCollapsed ? '0 0 auto' : (
+                !explorerCollapsed && !galleryCollapsed ? `0 0 ${(100 - sidebarSplitRatio) * 0.5}%` :
+                !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` :
+                galleryCollapsed ? '1 1 auto' : '0 0 50%'
+              ),
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div className="sidebar-section-header" onClick={toggleBuild}>
+              <span className={`sidebar-section-chevron ${buildCollapsed ? 'collapsed' : ''}`}>
+                <ChevronDownIcon />
+              </span>
+              <span>BUILD</span>
             </div>
-          )}
+            {!buildCollapsed && (
+              <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                {isProject ? (
+                  <ProjectPanel />
+                ) : (
+                  <div className="sidebar-no-project-hint">
+                    <p>プロジェクトフォルダを開くとビルド機能が使えます</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
-          {/* ギャラリーボタン（常時表示） */}
-          <div className="sidebar-gallery-btn-container">
-            <button className="sidebar-gallery-btn" onClick={openGalleryModal} title="Template Gallery (⌘⇧T)">
-              <GalleryIcon />
-              <span>Template Gallery</span>
-            </button>
+          {/* GALLERY セクション（常時表示） */}
+          <div
+            className="sidebar-section"
+            style={{
+              flex: galleryCollapsed ? '0 0 auto' : (
+                !explorerCollapsed && !buildCollapsed ? `0 0 ${(100 - sidebarSplitRatio) * 0.5}%` :
+                !explorerCollapsed ? `0 0 ${100 - sidebarSplitRatio}%` :
+                buildCollapsed ? '1 1 auto' : '0 0 50%'
+              ),
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div className="sidebar-section-header" onClick={toggleGallery}>
+              <span className={`sidebar-section-chevron ${galleryCollapsed ? 'collapsed' : ''}`}>
+                <ChevronDownIcon />
+              </span>
+              <span>GALLERY</span>
+              <button
+                className="sidebar-section-popout-btn"
+                onClick={(e) => { e.stopPropagation(); openGalleryModal(); }}
+                title="フルギャラリーを開く (⌘⇧T)"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </button>
+            </div>
+            {!galleryCollapsed && (
+              <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                <SidebarGallery onOpenFullGallery={openGalleryModal} />
+              </div>
+            )}
           </div>
         </div>
         {isSidebarOpen && <ResizeHandle onResize={handleSidebarResize} position="left" />}
@@ -1254,41 +1305,41 @@ function AppContent({ sidebarWidth, annotationWidth, handleSidebarResize, handle
             background-color: white;
           }
 
-          .sidebar-gallery-btn-container {
-            flex-shrink: 0;
-            padding: 8px;
-            border-top: 1px solid var(--border-color);
+          .sidebar-no-project-hint {
+            padding: 12px;
+            text-align: center;
           }
 
-          .sidebar-gallery-btn {
+          .sidebar-no-project-hint p {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            margin: 0;
+          }
+
+          .sidebar-section-popout-btn {
+            margin-left: auto;
             display: flex;
             align-items: center;
-            gap: 8px;
-            width: 100%;
-            padding: 7px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            background: var(--bg-secondary);
-            color: var(--text-secondary);
-            font-size: 12px;
-            font-weight: 500;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
             cursor: pointer;
+            opacity: 0;
             transition: all 0.15s;
           }
 
-          .sidebar-gallery-btn:hover {
-            background: var(--accent-color);
-            color: white;
-            border-color: var(--accent-color);
-          }
-
-          .sidebar-gallery-btn svg {
-            flex-shrink: 0;
-            opacity: 0.7;
-          }
-
-          .sidebar-gallery-btn:hover svg {
+          .sidebar-section-header:hover .sidebar-section-popout-btn {
             opacity: 1;
+          }
+
+          .sidebar-section-popout-btn:hover {
+            background: var(--bg-active);
+            color: var(--text-primary);
           }
 
           .sidebar.closed {

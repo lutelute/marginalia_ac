@@ -8,6 +8,20 @@ import { parseBibtex, type BibEntry } from '../codemirror/parsers/bibtex';
 
 type BuildStatus = 'idle' | 'building' | 'success' | 'error';
 
+export interface DemoSection {
+  path: string;
+  name: string;
+  content: string | null;
+}
+
+export interface DemoEntry {
+  manifestYaml: string;
+  sections: DemoSection[];
+}
+
+export type DefaultDemoData = Record<string, DemoEntry>;
+export type DefaultTemplateMap = Record<string, string[]>;
+
 interface BuildState {
   isProject: boolean;
   projectDir: string | null;
@@ -21,6 +35,8 @@ interface BuildState {
   manifestData: ManifestData | null;
   catalog: CatalogData | null;
   defaultCatalog: CatalogData | null;
+  defaultDemoData: DefaultDemoData | null;
+  defaultTemplateMap: DefaultTemplateMap | null;
   sourceFiles: string[];
   bibEntries: BibEntry[];
 }
@@ -42,10 +58,13 @@ type BuildAction =
   | { type: 'SET_DEFAULT_CATALOG'; payload: CatalogData | null }
   | { type: 'SET_SOURCE_FILES'; payload: string[] }
   | { type: 'SET_BIB_ENTRIES'; payload: BibEntry[] }
+  | { type: 'SET_DEFAULT_DEMO_DATA'; payload: { demoData: DefaultDemoData; templateMap: DefaultTemplateMap } }
   | { type: 'CLEAR_MANIFEST' };
 
 interface BuildContextValue extends BuildState {
   effectiveCatalog: CatalogData | null;
+  defaultDemoData: DefaultDemoData | null;
+  defaultTemplateMap: DefaultTemplateMap | null;
   detectProject: (dirPath: string) => Promise<void>;
   runBuild: (manifestPath: string, format: string) => Promise<void>;
   loadProjectData: (dirPath: string) => Promise<void>;
@@ -75,6 +94,8 @@ const initialState: BuildState = {
   manifestData: null,
   catalog: null,
   defaultCatalog: null,
+  defaultDemoData: null,
+  defaultTemplateMap: null,
   sourceFiles: [],
   bibEntries: [],
 };
@@ -89,7 +110,7 @@ function buildReducer(state: BuildState, action: BuildAction): BuildState {
       };
 
     case 'CLEAR_PROJECT':
-      return { ...initialState, defaultCatalog: state.defaultCatalog };
+      return { ...initialState, defaultCatalog: state.defaultCatalog, defaultDemoData: state.defaultDemoData, defaultTemplateMap: state.defaultTemplateMap };
 
     case 'SET_MANIFESTS':
       return { ...state, manifests: action.payload };
@@ -132,6 +153,9 @@ function buildReducer(state: BuildState, action: BuildAction): BuildState {
 
     case 'SET_BIB_ENTRIES':
       return { ...state, bibEntries: action.payload };
+
+    case 'SET_DEFAULT_DEMO_DATA':
+      return { ...state, defaultDemoData: action.payload.demoData, defaultTemplateMap: action.payload.templateMap };
 
     case 'CLEAR_MANIFEST':
       return { ...state, selectedManifestPath: null, manifestData: null };
@@ -292,6 +316,16 @@ export function BuildProvider({ children, rootPath }: { children: React.ReactNod
     window.electronAPI.readDefaultCatalog().then((result) => {
       if (result.success && result.catalog) {
         dispatch({ type: 'SET_DEFAULT_CATALOG', payload: result.catalog });
+      }
+    });
+  }, []);
+
+  // アプリ起動時にデフォルトデモデータをロード
+  useEffect(() => {
+    if (!window.electronAPI?.readDefaultDemoData) return;
+    window.electronAPI.readDefaultDemoData().then((result: any) => {
+      if (result.success) {
+        dispatch({ type: 'SET_DEFAULT_DEMO_DATA', payload: { demoData: result.demoData, templateMap: result.templateMap } });
       }
     });
   }, []);

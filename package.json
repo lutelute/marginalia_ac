@@ -58,6 +58,7 @@
     "asarUnpack": [
       "node_modules/node-pty/**/*"
     ],
+    "afterPack": "./scripts/afterPack.js",
     "publish": {
       "provider": "github",
       "owner": "lutelute",
@@ -66,6 +67,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "identity": null,
       "target": [
         "dmg",
         "zip"
